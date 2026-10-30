@@ -15,6 +15,7 @@
         "@solana/web3.js": "^1.98.4",
         "bignumber.js": "^11.1.5",
         "bs58": "^6.0.0",
+        "dexie": "^4.4.5",
         "nuxt": "^4.5.2",
         "pg": "^8.16.3",
         "pinia": "^3.0.4",
@@ -28,6 +29,7 @@
         "@types/node": "^25.6.0",
         "@types/pg": "^8.15.4",
         "@vue/test-utils": "^2.4.11",
+        "fake-indexeddb": "^6",
         "happy-dom": "^21.0.4",
         "tailwindcss": "^4.3.3",
         "typescript": "^5.6.3",
@@ -965,6 +967,8 @@
 
     "devalue": ["devalue@6.0.3", "https://registry.npmmirror.com/devalue/-/devalue-6.0.3.tgz", {}, "sha512-3woMEITftG1wKeO/4d/QXH1DVKctTSZg3jNGPpjp9hNr5Hos8MCFF5McTML5ZtgKDObm2R591B0spRp2IVernA=="],
 
+    "dexie": ["dexie@4.4.7", "https://registry.npmmirror.com/dexie/-/dexie-4.4.7.tgz", {}, "sha512-wemFiCl3DTCnfzyqepUTX1ugbYbkTrw3aEZOG7YjAOUoEQB5g5PrEywPzk5JpbX/SxqQ9IvjUpxCDIEjoOWEfA=="],
+
     "diff": ["diff@9.0.0", "https://registry.npmmirror.com/diff/-/diff-9.0.0.tgz", {}, "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="],
 
     "dijkstrajs": ["dijkstrajs@1.0.3", "https://registry.npmmirror.com/dijkstrajs/-/dijkstrajs-1.0.3.tgz", {}, "sha512-qiSlmBq9+BCdCA/L46dw8Uy93mloxsPSbwnm5yrKn2vMPiy8KyAskTF6zuV/j5BMsmOGZDPs7KjU+mjb670kfA=="],
@@ -1054,6 +1058,8 @@
     "exsolve": ["exsolve@1.2.0", "https://registry.npmmirror.com/exsolve/-/exsolve-1.2.0.tgz", {}, "sha512-h1pQPR9XoeSMdntRNCjyTznaume4UpfXrULBnlkZ2CUM/G5eSa+pBByGldO5uR8dxbPC+OuJXsPPNf+JZ81ADg=="],
 
     "eyes": ["eyes@0.1.8", "https://registry.npmmirror.com/eyes/-/eyes-0.1.8.tgz", {}, "sha512-GipyPsXO1anza0AOZdy69Im7hGFCNB7Y/NGjDlZGJ3GJJLtwNSb2vrzYrTYJRrRloVx7pl+bhUaTB8yiccPvFQ=="],
+
+    "fake-indexeddb": ["fake-indexeddb@6.2.7", "https://registry.npmmirror.com/fake-indexeddb/-/fake-indexeddb-6.2.7.tgz", {}, "sha512-g0ghQ+BmU3CSZaHup5FigEAAtCmtNyxkrmID7OAeK2qONHghw1aQ2l2T1RxmfhP1H1tEXVRWArUTGVCk5832ww=="],
 
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "https://registry.npmmirror.com/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
 
