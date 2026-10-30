@@ -4,7 +4,9 @@ import { buildSignInMessage } from '#shared/siws'
 
 export interface Me {
   wallet: string
-  balanceMicro: string
+  billing: 'on' | 'off'
+  /** Spendable balance (balance minus in-flight holds), micro-USD. */
+  availableMicro: string
 }
 
 export interface SignInDeps {

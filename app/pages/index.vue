@@ -8,6 +8,7 @@ onMounted(() => { refreshMe() })
     <h1>chat-ui</h1>
     <ClientOnly>
       <AuthSignInPanel />
+      <BillingTopUpPanel />
       <template #fallback>
         <p>Loading wallet…</p>
       </template>
