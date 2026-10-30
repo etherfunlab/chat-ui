@@ -35,10 +35,13 @@ export function toModelEntry(raw: unknown): ModelEntry | null {
 
   const pricing: Pricing = { ...base }
   const ext = spec.pricing.extended
-  if (isObj(ext)) {
-    const tier = toTier(ext)
-    const threshold = num(ext.context_token_threshold)
-    if (tier && threshold !== undefined) pricing.extended = { threshold, ...tier }
+  if (ext !== undefined) {
+    // A long-context tier we cannot read would silently bill long requests at
+    // base prices; distrust the whole entry instead.
+    const tier = isObj(ext) ? toTier(ext) : null
+    const threshold = isObj(ext) ? num(ext.context_token_threshold) : undefined
+    if (!tier || threshold === undefined || threshold < 0) return null
+    pricing.extended = { threshold, ...tier }
   }
 
   const caps = isObj(spec.capabilities) ? spec.capabilities : {}
@@ -96,12 +99,24 @@ export function createCatalog(o: {
     try {
       const body = await o.fetchModels()
       const data = isObj(body) && Array.isArray(body.data) ? body.data : []
+      const listed = new Map<string, number>()
+      for (const item of data) {
+        if (isObj(item) && typeof item.id === 'string') listed.set(item.id, (listed.get(item.id) ?? 0) + 1)
+      }
       const byId = new Map<string, ModelEntry>()
       for (const item of data) {
         const entry = toModelEntry(item)
-        if (entry) byId.set(entry.id, entry)
+        // A duplicated id is ambiguous: response order must never pick the price.
+        if (entry && listed.get(entry.id) === 1) byId.set(entry.id, entry)
       }
-      const fresh = o.modelIds.map(id => byId.get(id)).filter((m): m is ModelEntry => m !== undefined)
+      const fresh = o.modelIds.flatMap((id) => {
+        const entry = byId.get(id)
+        if (entry) return [entry]
+        // Listed but unusable (malformed or duplicated): keep the last good entry.
+        // Not listed at all: the upstream retired it.
+        const previous = listed.has(id) ? cached?.find(m => m.id === id) : undefined
+        return previous ? [previous] : []
+      })
       // An empty parse is an upstream anomaly, not "no models": keep the last good list.
       if (fresh.length === 0) throw new Error('no configured models in upstream response')
       cached = fresh

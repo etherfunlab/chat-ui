@@ -48,6 +48,14 @@ describe('costMicro', () => {
     expect(costMicro({ input: 0.00825, output: 0 }, { ...ZERO_USAGE, inputTokens: 1000 }, { ...none, markupBps: 1000 })).toBe(9)
   })
 
+  it('floors sub-micro price precision instead of rounding the price up', () => {
+    // 0.0000015 USD/M × 1M tokens = 1.5 micro-USD → 1, not 2
+    expect(costMicro({ input: 0.0000015, output: 0 }, { ...ZERO_USAGE, inputTokens: 1_000_000 }, none)).toBe(1)
+    // a price that is not exactly representable in binary must not lose a unit
+    expect(costMicro({ input: 0.57, output: 0 }, { ...ZERO_USAGE, inputTokens: 1 }, none)).toBe(0)
+    expect(costMicro({ input: 0.57, output: 0 }, { ...ZERO_USAGE, inputTokens: 100 }, none)).toBe(57)
+  })
+
   it('never goes negative when cached counts exceed input', () => {
     const u = { ...ZERO_USAGE, inputTokens: 10, cachedInputTokens: 50 }
     expect(costMicro(opus, u, none)).toBe(10) // 50 cached * 0.2, uncached clamps to 0
@@ -75,6 +83,18 @@ describe('estimates', () => {
     const t = estimateInputTokens(payload)
     expect(t).toBeGreaterThanOrEqual(IMAGE_TOKENS)
     expect(t).toBeLessThan(IMAGE_TOKENS + 100)
+  })
+
+  it('counts object keys and numbers, so tool schemas cannot slip past the hold', () => {
+    const small = { tools: [{ type: 'function', function: { name: 'f', parameters: { type: 'object', properties: {} } } }] }
+    const enumValues = Array.from({ length: 5000 }, (_, i) => 100000 + i)
+    const big = { tools: [{ type: 'function', function: { name: 'f', parameters: {
+      type: 'object',
+      properties: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`property_name_number_${i}`, { type: 'integer', minimum: 0 }])),
+      enum: enumValues,
+    } } }] }
+    // 5000 six-digit numbers alone are ≥ 5000 × ceil(6/4) tokens
+    expect(estimateInputTokens(big) - estimateInputTokens(small)).toBeGreaterThan(5000 * 2)
   })
 
   it('counts Responses-style input_image parts as images', () => {

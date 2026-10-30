@@ -12,7 +12,15 @@ export const MIN_OUTPUT_TOKENS = 1024
 const PICO = 1_000_000n
 const BPS = 10_000n
 
-const pico = (price: number): bigint => BigInt(Math.round(price * 1_000_000))
+/**
+ * Price → pico units, truncating digits past the 6th decimal (never rounding
+ * the price up). Read from the decimal rendering, not price × 1e6, so a price
+ * like 0.57 (569999.99… in binary) keeps its exact value.
+ */
+function pico(price: number): bigint {
+  const [whole, frac = ''] = price.toFixed(12).split('.')
+  return BigInt(whole!) * PICO + BigInt(frac.slice(0, 6))
+}
 
 function tierFor(p: Pricing, inputTokens: number): PriceTier {
   return p.extended && inputTokens > p.extended.threshold ? p.extended : p
@@ -51,15 +59,20 @@ export function estimateTokens(text: string): number {
   return Math.ceil(ascii / 4) + other
 }
 
-/** Walks a request payload: strings by estimateTokens, image parts at IMAGE_TOKENS each. */
+/**
+ * Walks a request payload the way the upstream serializes it into the prompt:
+ * object keys, strings, numbers and booleans all count (tool schemas are mostly
+ * keys and numbers); image parts count IMAGE_TOKENS each and their URL bytes not at all.
+ */
 export function estimateInputTokens(payload: unknown): number {
   if (typeof payload === 'string') return estimateTokens(payload)
+  if (typeof payload === 'number' || typeof payload === 'boolean') return estimateTokens(String(payload))
   if (Array.isArray(payload)) return payload.reduce<number>((n, v) => n + estimateInputTokens(v), 0)
   if (typeof payload === 'object' && payload !== null) {
     const obj = payload as Record<string, unknown>
     if (obj.type === 'image_url' || obj.type === 'input_image') return IMAGE_TOKENS
     let n = 0
-    for (const v of Object.values(obj)) n += estimateInputTokens(v)
+    for (const [k, v] of Object.entries(obj)) n += estimateTokens(k) + estimateInputTokens(v)
     return n
   }
   return 0

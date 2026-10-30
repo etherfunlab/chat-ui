@@ -46,17 +46,17 @@ describe('top-up intents', () => {
 
   it('claims only the owner’s pending intent, once, recording the signature', async () => {
     await createIntent(db, intent('i1'))
-    expect(await claimIntent(db, 'i1', 'X', 'SIGX')).toBeNull()
-    const claimed = await claimIntent(db, 'i1', 'W', 'SIG1')
+    expect(await claimIntent(db, 'i1', 'X', 'SIGX', ['ref-i1'])).toBeNull()
+    const claimed = await claimIntent(db, 'i1', 'W', 'SIG1', ['ref-i1'])
     expect(claimed).toMatchObject({ reference: 'ref-i1', status: 'submitting', txSignature: 'SIG1' })
-    expect(await claimIntent(db, 'i1', 'W', 'SIG1')).toBeNull()
+    expect(await claimIntent(db, 'i1', 'W', 'SIG1', ['ref-i1'])).toBeNull()
   })
 
   it('release returns the intent to pending and forgets the rejected signature', async () => {
     await createIntent(db, intent('i1'))
-    await claimIntent(db, 'i1', 'W', 'SIG1')
+    await claimIntent(db, 'i1', 'W', 'SIG1', ['ref-i1'])
     await releaseClaim(db, 'i1')
-    const again = await claimIntent(db, 'i1', 'W', 'SIG2')
+    const again = await claimIntent(db, 'i1', 'W', 'SIG2', ['ref-i1'])
     expect(again).toMatchObject({ status: 'submitting', txSignature: 'SIG2' })
   })
 
@@ -67,15 +67,24 @@ describe('top-up intents', () => {
     expect(await balance()).toBe(0)
   })
 
-  it('lists reconcilable intents: submitting, and pending within the hour', async () => {
+  it('lists reconcilable intents: submitting, and pending of any age', async () => {
     await createIntent(db, intent('sub'))
-    await claimIntent(db, 'sub', 'W', 'SIGSUB')
+    await claimIntent(db, 'sub', 'W', 'SIGSUB', ['ref-sub'])
     await createIntent(db, intent('fresh'))
     await createIntent(db, intent('old'))
-    await pglite.exec(`UPDATE topup_intents SET created_at = now() - interval '2 hours' WHERE id = 'old'`)
+    await pglite.exec(`UPDATE topup_intents SET created_at = now() - interval '2 days' WHERE id = 'old'`)
+    await createIntent(db, intent('done'))
+    await creditTopUp(db, 'done', 'SIGDONE')
     await createIntent(db, intent('other', 'X'))
     const ids = (await reconcilableIntents(db, 'W')).map(i => i.id).sort()
-    expect(ids).toEqual(['fresh', 'sub'])
+    expect(ids).toEqual(['fresh', 'old', 'sub'])
+  })
+
+  it('refuses a claim whose transaction does not carry the intent’s reference', async () => {
+    await createIntent(db, intent('i1'))
+    expect(await claimIntent(db, 'i1', 'W', 'SIG-OTHER', ['some-other-reference', 'T'])).toBeNull()
+    const { rows } = await pglite.query<{ s: string, t: string | null }>(`SELECT status AS s, tx_signature AS t FROM topup_intents WHERE id = 'i1'`)
+    expect(rows[0]).toEqual({ s: 'pending', t: null })
   })
 
   it('lists a wallet’s intents newest first with string amounts', async () => {

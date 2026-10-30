@@ -62,6 +62,15 @@ describe('toModelEntry', () => {
     expect(toModelEntry(c)).toBeNull()
   })
 
+  it('rejects an entry whose extended tier is malformed (never fall back to base prices)', () => {
+    const r = structuredClone(raw('openai-gpt-61-sol')) as { model_spec: { pricing: { extended: Record<string, unknown> } } }
+    delete r.model_spec.pricing.extended.output
+    expect(toModelEntry(r)).toBeNull()
+    const t = structuredClone(raw('openai-gpt-61-sol')) as { model_spec: { pricing: { extended: Record<string, unknown> } } }
+    delete t.model_spec.pricing.extended.context_token_threshold
+    expect(toModelEntry(t)).toBeNull()
+  })
+
   it('returns null for malformed entries', () => {
     expect(toModelEntry(null)).toBeNull()
     expect(toModelEntry({ id: 'x' })).toBeNull()
@@ -113,6 +122,35 @@ describe('createCatalog', () => {
     await c.list()
     t = 100
     expect((await c.list()).map(m => m.id)).toEqual(['claude-opus-5-5'])
+  })
+
+  it('keeps a cached model whose fresh entry is malformed', async () => {
+    let t = 0
+    const broken = { data: [raw('claude-opus-5-5'), { id: 'openai-gpt-61-sol', model_spec: { pricing: {} } }] }
+    const fetchModels = vi.fn().mockResolvedValueOnce(fixture).mockResolvedValueOnce(broken)
+    const c = createCatalog({ fetchModels, modelIds: ['claude-opus-5-5', 'openai-gpt-61-sol'], ttlMs: 10, now: () => t })
+    await c.list()
+    t = 100
+    expect((await c.list()).map(m => m.id)).toEqual(['claude-opus-5-5', 'openai-gpt-61-sol'])
+  })
+
+  it('drops a model the upstream no longer lists', async () => {
+    let t = 0
+    const fetchModels = vi.fn().mockResolvedValueOnce(fixture).mockResolvedValueOnce({ data: [raw('claude-opus-5-5')] })
+    const c = createCatalog({ fetchModels, modelIds: ['claude-opus-5-5', 'openai-gpt-61-sol'], ttlMs: 10, now: () => t })
+    await c.list()
+    t = 100
+    expect((await c.list()).map(m => m.id)).toEqual(['claude-opus-5-5'])
+  })
+
+  it('treats duplicate ids as ambiguous rather than letting order pick the price', async () => {
+    const cheap = structuredClone(raw('claude-opus-5-5'))
+    cheap.model_spec.pricing.output.usd = 1
+    const c = createCatalog({
+      fetchModels: async () => ({ data: [raw('claude-opus-5-5'), cheap, raw('openai-gpt-61-sol')] }),
+      modelIds: ['claude-opus-5-5', 'openai-gpt-61-sol'],
+    })
+    expect((await c.list()).map(m => m.id)).toEqual(['openai-gpt-61-sol'])
   })
 
   it('throws when it has never loaded', async () => {

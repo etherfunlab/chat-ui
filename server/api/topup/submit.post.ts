@@ -3,7 +3,7 @@ import { assertSameOrigin } from '#server/utils/sameOrigin'
 import { requireWallet } from '#server/utils/session'
 import { assertBillingOn } from '#server/utils/billingGate'
 import { getPool } from '#server/utils/db'
-import { getSolanaConnection, signatureOf, verifyTopUp } from '#server/utils/solana'
+import { getSolanaConnection, parseSignedTransaction, verifyTopUp } from '#server/utils/solana'
 import { claimIntent, creditTopUp, failIntent, getIntentStatus, releaseClaim } from '#server/utils/topups'
 
 interface Body {
@@ -20,18 +20,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing fields' })
   }
 
-  let signature: string
+  let parsed: { signature: string, accountKeys: string[] }
   try {
-    signature = signatureOf(body.signedTxBase64)
+    parsed = parseSignedTransaction(body.signedTxBase64)
   } catch {
     throw createError({ statusCode: 400, statusMessage: 'Not a signed transaction' })
   }
+  const { signature } = parsed
 
   const db = getPool()
-  const intent = await claimIntent(db, body.intentId, wallet, signature)
+  const intent = await claimIntent(db, body.intentId, wallet, signature, parsed.accountKeys)
   if (!intent) {
     const status = await getIntentStatus(db, body.intentId, wallet)
     if (!status) throw createError({ statusCode: 404, statusMessage: 'Intent not found' })
+    if (status === 'pending') {
+      throw createError({ statusCode: 400, statusMessage: 'Transaction does not belong to this intent' })
+    }
     return { status }
   }
 

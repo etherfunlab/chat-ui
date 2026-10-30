@@ -47,19 +47,22 @@ export async function createIntent(
 /**
  * Atomically moves the caller's own pending intent to submitting and records
  * the signature of the transaction about to be broadcast, so a send that
- * fails ambiguously can still be found and credited later.
+ * fails ambiguously can still be found and credited later. The transaction
+ * must carry this intent's reference: otherwise anyone could park another
+ * payment's signature on their own intent and block its credit.
  */
 export async function claimIntent(
   db: Queryable,
   id: string,
   wallet: string,
   signature: string,
+  accountKeys: string[],
 ): Promise<TopUpIntent | null> {
   const { rows } = await db.query(
     `UPDATE topup_intents SET status = 'submitting', tx_signature = $3
-     WHERE id = $1 AND wallet = $2 AND status = 'pending'
+     WHERE id = $1 AND wallet = $2 AND status = 'pending' AND reference = ANY($4::text[])
      RETURNING ${COLUMNS}`,
-    [id, wallet, signature],
+    [id, wallet, signature, accountKeys],
   )
   return rows[0] ? toIntent(rows[0]) : null
 }
@@ -93,11 +96,15 @@ export async function creditTopUp(db: Queryable, id: string, signature: string):
   return Number(rows[0]!.credited)
 }
 
-/** Intents worth re-checking on chain: submitting ones, and pending ones from the last hour. */
+/**
+ * Intents worth re-checking on chain: every pending or submitting one, of any
+ * age — a user may have broadcast the transfer without our submit ever seeing
+ * it. Abandoned ones leave this set as reconcile expires them.
+ */
 export async function reconcilableIntents(db: Queryable, wallet: string): Promise<TopUpIntent[]> {
   const { rows } = await db.query(
     `SELECT ${COLUMNS} FROM topup_intents
-     WHERE wallet = $1 AND (status = 'submitting' OR (status = 'pending' AND created_at > now() - interval '1 hour'))
+     WHERE wallet = $1 AND status IN ('pending', 'submitting')
      ORDER BY created_at DESC LIMIT 20`,
     [wallet],
   )

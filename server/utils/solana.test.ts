@@ -7,7 +7,7 @@ const findReference = vi.fn()
 vi.mock('@solana/pay', () => ({ createTransfer, findReference }))
 
 const {
-  usdcBaseUnits, verifyTopUp, buildTopUpTransaction, findTopUpSignature, signatureLanded, signatureOf,
+  usdcBaseUnits, verifyTopUp, buildTopUpTransaction, findTopUpSignatures, signatureLanded, parseSignedTransaction,
 } = await import('./solana')
 
 const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
@@ -138,17 +138,25 @@ describe('buildTopUpTransaction', () => {
   })
 })
 
-describe('findTopUpSignature', () => {
-  it('returns the signature, or null only when the chain has none', async () => {
-    findReference.mockResolvedValueOnce({ signature: 'SIG1' })
-    expect(await findTopUpSignature({} as never, REFERENCE)).toBe('SIG1')
-    findReference.mockRejectedValueOnce(Object.assign(new Error('not found'), { name: 'FindReferenceError' }))
-    expect(await findTopUpSignature({} as never, REFERENCE)).toBeNull()
+describe('findTopUpSignatures', () => {
+  it('returns every successful transaction that carries the reference', async () => {
+    const getSignaturesForAddress = vi.fn(async () => [
+      { signature: 'DUST', err: null },
+      { signature: 'FAILED', err: { InstructionError: [0, 'x'] } },
+      { signature: 'REAL', err: null },
+    ])
+    expect(await findTopUpSignatures({ getSignaturesForAddress } as never, REFERENCE)).toEqual(['DUST', 'REAL'])
+    expect((getSignaturesForAddress.mock.calls[0] as unknown[])[0]).toBeInstanceOf(PublicKey)
+  })
+
+  it('returns an empty list only when the chain has none', async () => {
+    const c = { getSignaturesForAddress: vi.fn(async () => []) } as never
+    expect(await findTopUpSignatures(c, REFERENCE)).toEqual([])
   })
 
   it('throws on RPC failures so callers never mistake them for "no payment"', async () => {
-    findReference.mockRejectedValueOnce(new Error('429 Too Many Requests'))
-    await expect(findTopUpSignature({} as never, REFERENCE)).rejects.toThrow(/429/)
+    const c = { getSignaturesForAddress: vi.fn(async () => { throw new Error('429 Too Many Requests') }) } as never
+    await expect(findTopUpSignatures(c, REFERENCE)).rejects.toThrow(/429/)
   })
 })
 
@@ -160,20 +168,21 @@ describe('signatureLanded', () => {
   })
 })
 
-describe('signatureOf', () => {
-  it('derives the fee-payer signature from signed transaction bytes', () => {
+describe('parseSignedTransaction', () => {
+  it('derives the fee-payer signature and the account keys from signed bytes', () => {
     const payer = Keypair.generate()
-    const tx = new Transaction().add(SystemProgram.transfer({
-      fromPubkey: payer.publicKey, toPubkey: new PublicKey(TREASURY), lamports: 1,
-    }))
+    const ix = SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: new PublicKey(TREASURY), lamports: 1 })
+    ix.keys.push({ pubkey: new PublicKey(REFERENCE), isSigner: false, isWritable: false })
+    const tx = new Transaction().add(ix)
     tx.feePayer = payer.publicKey
     tx.recentBlockhash = Keypair.generate().publicKey.toBase58()
     tx.sign(payer)
-    const b64 = Buffer.from(tx.serialize()).toString('base64')
-    expect(signatureOf(b64)).toBe(bs58.encode(tx.signature!))
+    const parsed = parseSignedTransaction(Buffer.from(tx.serialize()).toString('base64'))
+    expect(parsed.signature).toBe(bs58.encode(tx.signature!))
+    expect(parsed.accountKeys).toEqual(expect.arrayContaining([payer.publicKey.toBase58(), TREASURY, REFERENCE]))
   })
 
   it('throws on bytes that are not a signed transaction', () => {
-    expect(() => signatureOf(Buffer.from('garbage').toString('base64'))).toThrow()
+    expect(() => parseSignedTransaction(Buffer.from('garbage').toString('base64'))).toThrow()
   })
 })

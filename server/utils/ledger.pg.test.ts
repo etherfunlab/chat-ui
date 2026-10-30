@@ -124,6 +124,24 @@ describe('settleCharge', () => {
   })
 })
 
+describe('argument guards', () => {
+  it('rejects negative or inverted hold bounds', async () => {
+    await expect(openCharge(db, { ...base, id: nextId(), wallet: 'W', wantMicro: -100, minMicro: 0 })).rejects.toThrow()
+    await expect(openCharge(db, { ...base, id: nextId(), wallet: 'W', wantMicro: 100, minMicro: -1 })).rejects.toThrow()
+    await expect(openCharge(db, { ...base, id: nextId(), wallet: 'W', wantMicro: 100, minMicro: 101 })).rejects.toThrow()
+    expect(await account('W')).toEqual({ balance: 1_000_000, held: 0 })
+  })
+
+  it('rejects settle with a non-final status or negative cost', async () => {
+    const id = nextId()
+    await openCharge(db, { ...base, id, wallet: 'W', wantMicro: 100, minMicro: 1 })
+    await expect(settleCharge(db, { id, status: 'pending' as never, costMicro: 10, billing: true, usage: ZERO_USAGE })).rejects.toThrow()
+    await expect(settleCharge(db, { id, status: 'ok', costMicro: -10, billing: true, usage: ZERO_USAGE })).rejects.toThrow()
+    expect(await account('W')).toEqual({ balance: 1_000_000, held: 100 })
+    expect(await settleCharge(db, { id, status: 'ok', costMicro: 10, billing: true, usage: ZERO_USAGE })).toBe('settled')
+  })
+})
+
 describe('billing off', () => {
   it('billing off: no hold, no deduction, usage recorded', async () => {
     const id = nextId()

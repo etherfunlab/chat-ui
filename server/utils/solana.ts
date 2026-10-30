@@ -1,5 +1,5 @@
 import { Connection, Keypair, PublicKey, VersionedTransaction, type Transaction } from '@solana/web3.js'
-import { createTransfer, findReference } from '@solana/pay'
+import { createTransfer } from '@solana/pay'
 import type { Amount } from '@solana/pay'
 import BigNumber from 'bignumber.js'
 import bs58 from 'bs58'
@@ -110,18 +110,15 @@ export async function verifyTopUp(
 }
 
 /**
- * Finds a payment by its reference key (reconcile when the signature was lost).
- * Returns null only when the chain has no transaction with that reference; an
- * RPC failure throws, so callers never read "unreachable" as "never paid".
+ * Every successful transaction carrying a reference key, so reconcile can try
+ * them all: anyone may add a public key to a transaction of their own, so the
+ * first (or oldest) match is not necessarily the payment. An empty list means
+ * the chain has none; RPC failures throw, so "unreachable" never reads as
+ * "never paid".
  */
-export async function findTopUpSignature(connection: Connection, reference: string): Promise<string | null> {
-  try {
-    const info = await findReference(connection, new PublicKey(reference), { finality: 'confirmed' })
-    return info.signature
-  } catch (err) {
-    if ((err as Error).name === 'FindReferenceError') return null
-    throw err
-  }
+export async function findTopUpSignatures(connection: Connection, reference: string): Promise<string[]> {
+  const infos = await connection.getSignaturesForAddress(new PublicKey(reference), { limit: 20 }, 'confirmed')
+  return infos.filter(i => i.err === null).map(i => i.signature)
 }
 
 /** Whether the cluster has any record of a signature (searching history). RPC errors throw. */
@@ -131,12 +128,17 @@ export async function signatureLanded(connection: Connection, signature: string)
 }
 
 /**
- * The fee-payer signature of signed transaction bytes — the id the cluster will
- * know it by — computed before broadcasting so it is never lost to a failed send.
+ * Parses signed transaction bytes: the fee-payer signature — the id the
+ * cluster will know it by, computed before broadcasting so it is never lost to
+ * a failed send — and its static account keys, which must include the
+ * intent's reference for the transaction to be claimed against that intent.
  */
-export function signatureOf(signedTxBase64: string): string {
+export function parseSignedTransaction(signedTxBase64: string): { signature: string, accountKeys: string[] } {
   const tx = VersionedTransaction.deserialize(Buffer.from(signedTxBase64, 'base64'))
   const sig = tx.signatures[0]
   if (!sig || sig.every(b => b === 0)) throw new Error('transaction is not signed')
-  return bs58.encode(sig)
+  return {
+    signature: bs58.encode(sig),
+    accountKeys: tx.message.staticAccountKeys.map(k => k.toBase58()),
+  }
 }

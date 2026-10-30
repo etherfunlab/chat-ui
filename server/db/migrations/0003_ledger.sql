@@ -2,7 +2,7 @@
 -- endpoints), and per-request usage records. Usage rows hold metering only —
 -- never conversation content.
 
-ALTER TABLE accounts ADD COLUMN held_micro bigint NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN held_micro bigint NOT NULL DEFAULT 0 CHECK (held_micro >= 0);
 
 CREATE TABLE api_keys (
   id text PRIMARY KEY,
@@ -22,8 +22,8 @@ CREATE TABLE usage_records (
   endpoint text NOT NULL CHECK (endpoint IN ('chat', 'responses')),
   model text NOT NULL,
   status text NOT NULL CHECK (status IN ('pending', 'ok', 'aborted', 'error')),
-  hold_micro bigint NOT NULL DEFAULT 0,
-  cost_micro bigint NOT NULL DEFAULT 0,
+  hold_micro bigint NOT NULL DEFAULT 0 CHECK (hold_micro >= 0),
+  cost_micro bigint NOT NULL DEFAULT 0 CHECK (cost_micro >= 0),
   input_tokens integer,
   cached_input_tokens integer,
   cache_write_tokens integer,
@@ -55,6 +55,10 @@ DECLARE
   v_available bigint;
   v_hold bigint;
 BEGIN
+  IF p_want IS NULL OR p_min IS NULL OR p_min < 0 OR p_want < p_min THEN
+    RAISE EXCEPTION 'open_charge: invalid hold bounds (want %, min %)', p_want, p_min;
+  END IF;
+
   IF p_key_hash IS NOT NULL THEN
     UPDATE api_keys SET last_used_at = now()
       WHERE key_hash = p_key_hash AND revoked_at IS NULL
@@ -121,6 +125,10 @@ DECLARE
   v_wallet text;
   v_hold bigint;
 BEGIN
+  IF p_status IS NULL OR p_status NOT IN ('ok', 'aborted', 'error') OR p_cost IS NULL OR p_cost < 0 THEN
+    RAISE EXCEPTION 'settle_charge: invalid settlement (status %, cost %)', p_status, p_cost;
+  END IF;
+
   SELECT wallet INTO v_wallet FROM usage_records WHERE id = p_id;
   IF NOT FOUND THEN
     RETURN 'noop';

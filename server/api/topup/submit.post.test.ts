@@ -11,7 +11,7 @@ const releaseClaim = vi.fn()
 const failIntent = vi.fn()
 const creditTopUp = vi.fn()
 const verifyTopUp = vi.fn()
-const signatureOf = vi.fn()
+const parseSignedTransaction = vi.fn()
 const sendRawTransaction = vi.fn()
 const confirmTransaction = vi.fn()
 
@@ -23,7 +23,7 @@ vi.mock('#server/utils/topups', () => ({ claimIntent, getIntentStatus, releaseCl
 vi.mock('#server/utils/solana', () => ({
   getSolanaConnection: () => ({ sendRawTransaction, confirmTransaction }),
   verifyTopUp,
-  signatureOf,
+  parseSignedTransaction,
 }))
 
 const { default: handler } = await import('./submit.post')
@@ -38,7 +38,7 @@ const rejected = (msg: string) => new SendTransactionError({ action: 'send', sig
 beforeEach(() => {
   vi.clearAllMocks()
   getServerConfig.mockReturnValue({ billing: 'on' })
-  signatureOf.mockReturnValue('SIG')
+  parseSignedTransaction.mockReturnValue({ signature: 'SIG', accountKeys: ['W', 'T', 'R'] })
   claimIntent.mockResolvedValue(INTENT)
   sendRawTransaction.mockResolvedValue('SIG')
   confirmTransaction.mockResolvedValue({ value: { err: null } })
@@ -57,13 +57,13 @@ describe('POST /api/topup/submit', () => {
 
   it('records the signature at claim time, before broadcasting', async () => {
     await handler(evt(body))
-    expect(signatureOf).toHaveBeenCalledWith(body.signedTxBase64)
-    expect(claimIntent).toHaveBeenCalledWith(expect.anything(), 'i1', 'W', 'SIG')
+    expect(parseSignedTransaction).toHaveBeenCalledWith(body.signedTxBase64)
+    expect(claimIntent).toHaveBeenCalledWith(expect.anything(), 'i1', 'W', 'SIG', ['W', 'T', 'R'])
     expect(claimIntent.mock.invocationCallOrder[0]).toBeLessThan(sendRawTransaction.mock.invocationCallOrder[0]!)
   })
 
   it('rejects bytes that are not a signed transaction with 400 and claims nothing', async () => {
-    signatureOf.mockImplementation(() => { throw new Error('bad tx') })
+    parseSignedTransaction.mockImplementation(() => { throw new Error('bad tx') })
     await expect(handler(evt(body))).rejects.toMatchObject({ statusCode: 400 })
     expect(claimIntent).not.toHaveBeenCalled()
   })
@@ -115,6 +115,13 @@ describe('POST /api/topup/submit', () => {
     sendRawTransaction.mockRejectedValue(rejected('Transaction simulation failed: custom program error: 0x1'))
     await expect(handler(evt(body))).rejects.toMatchObject({ statusCode: 400 })
     expect(releaseClaim).toHaveBeenCalledWith(expect.anything(), 'i1')
+  })
+
+  it('rejects a transaction that does not carry this intent’s reference', async () => {
+    claimIntent.mockResolvedValue(null)
+    getIntentStatus.mockResolvedValue('pending')
+    await expect(handler(evt(body))).rejects.toMatchObject({ statusCode: 400 })
+    expect(sendRawTransaction).not.toHaveBeenCalled()
   })
 
   it('reports the real status when nothing was credited', async () => {

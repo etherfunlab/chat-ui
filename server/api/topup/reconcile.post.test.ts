@@ -8,7 +8,7 @@ const reconcilableIntents = vi.fn()
 const failIntent = vi.fn()
 const creditTopUp = vi.fn()
 const verifyTopUp = vi.fn()
-const findTopUpSignature = vi.fn()
+const findTopUpSignatures = vi.fn()
 const signatureLanded = vi.fn()
 const getBlockHeight = vi.fn()
 
@@ -20,7 +20,7 @@ vi.mock('#server/utils/topups', () => ({ reconcilableIntents, failIntent, credit
 vi.mock('#server/utils/solana', () => ({
   getSolanaConnection: () => ({ getBlockHeight }),
   verifyTopUp,
-  findTopUpSignature,
+  findTopUpSignatures,
   signatureLanded,
 }))
 
@@ -38,7 +38,7 @@ beforeEach(() => {
 describe('POST /api/topup/reconcile', () => {
   it('reconcile finds by reference and credits', async () => {
     reconcilableIntents.mockResolvedValue([{ ...base, id: 'i1', reference: 'R1', status: 'pending', txSignature: null }])
-    findTopUpSignature.mockResolvedValue('SIG1')
+    findTopUpSignatures.mockResolvedValue(['SIG1'])
     verifyTopUp.mockResolvedValue({ ok: true })
     expect(await handler(evt())).toEqual({ intents: [{ id: 'i1', status: 'confirmed' }] })
     expect(creditTopUp).toHaveBeenCalledWith(expect.anything(), 'i1', 'SIG1')
@@ -48,13 +48,13 @@ describe('POST /api/topup/reconcile', () => {
     reconcilableIntents.mockResolvedValue([{ ...base, id: 'i2', reference: 'R2', status: 'submitting', txSignature: 'SIG2' }])
     verifyTopUp.mockResolvedValue({ ok: false, retryable: true, reason: 'not found yet' })
     expect(await handler(evt())).toEqual({ intents: [{ id: 'i2', status: 'submitting' }] })
-    expect(findTopUpSignature).not.toHaveBeenCalled()
+    expect(findTopUpSignatures).not.toHaveBeenCalled()
     expect(failIntent).not.toHaveBeenCalled()
   })
 
   it('leaves a pending intent with no payment on chain untouched while its blockhash is valid', async () => {
     reconcilableIntents.mockResolvedValue([{ ...base, id: 'i3', reference: 'R3', status: 'pending', txSignature: null }])
-    findTopUpSignature.mockResolvedValue(null)
+    findTopUpSignatures.mockResolvedValue([])
     expect(await handler(evt())).toEqual({ intents: [{ id: 'i3', status: 'pending' }] })
     expect(failIntent).not.toHaveBeenCalled()
   })
@@ -62,7 +62,7 @@ describe('POST /api/topup/reconcile', () => {
   it('expires a pending intent once its blockhash can no longer land', async () => {
     getBlockHeight.mockResolvedValue(101)
     reconcilableIntents.mockResolvedValue([{ ...base, id: 'i3', reference: 'R3', status: 'pending', txSignature: null }])
-    findTopUpSignature.mockResolvedValue(null)
+    findTopUpSignatures.mockResolvedValue([])
     expect(await handler(evt())).toEqual({ intents: [{ id: 'i3', status: 'failed' }] })
     expect(failIntent).toHaveBeenCalledWith(expect.anything(), 'i3', 'expired')
   })
@@ -97,9 +97,9 @@ describe('POST /api/topup/reconcile', () => {
       { ...base, id: 'bad', reference: 'RB', status: 'pending', txSignature: null },
       { ...base, id: 'good', reference: 'RG', status: 'pending', txSignature: null },
     ])
-    findTopUpSignature
+    findTopUpSignatures
       .mockRejectedValueOnce(new Error('429 Too Many Requests'))
-      .mockResolvedValueOnce('SIGG')
+      .mockResolvedValueOnce(['SIGG'])
     verifyTopUp.mockResolvedValue({ ok: true })
     expect(await handler(evt())).toEqual({ intents: [
       { id: 'bad', status: 'pending' },
@@ -108,10 +108,37 @@ describe('POST /api/topup/reconcile', () => {
     expect(failIntent).not.toHaveBeenCalled()
   })
 
+  it('credits when any signature for the reference verifies, even after a dust transaction', async () => {
+    reconcilableIntents.mockResolvedValue([{ ...base, id: 'i8', reference: 'R8', status: 'pending', txSignature: null }])
+    findTopUpSignatures.mockResolvedValue(['DUST', 'REAL'])
+    verifyTopUp.mockImplementation(async (_c: unknown, sig: string) => sig === 'REAL'
+      ? { ok: true }
+      : { ok: false, retryable: false, reason: 'amount not transferred' })
+    expect(await handler(evt())).toEqual({ intents: [{ id: 'i8', status: 'confirmed' }] })
+    expect(creditTopUp).toHaveBeenCalledWith(expect.anything(), 'i8', 'REAL')
+  })
+
+  it('never fails a pending intent over someone else’s transaction while its own can still land', async () => {
+    reconcilableIntents.mockResolvedValue([{ ...base, id: 'i9', reference: 'R9', status: 'pending', txSignature: null }])
+    findTopUpSignatures.mockResolvedValue(['DUST'])
+    verifyTopUp.mockResolvedValue({ ok: false, retryable: false, reason: 'amount not transferred' })
+    expect(await handler(evt())).toEqual({ intents: [{ id: 'i9', status: 'pending' }] })
+    expect(failIntent).not.toHaveBeenCalled()
+  })
+
+  it('expires a pending intent with only non-matching reference transactions once past validity', async () => {
+    getBlockHeight.mockResolvedValue(101)
+    reconcilableIntents.mockResolvedValue([{ ...base, id: 'i10', reference: 'R10', status: 'pending', txSignature: null }])
+    findTopUpSignatures.mockResolvedValue(['DUST'])
+    verifyTopUp.mockResolvedValue({ ok: false, retryable: false, reason: 'amount not transferred' })
+    expect(await handler(evt())).toEqual({ intents: [{ id: 'i10', status: 'failed' }] })
+    expect(failIntent).toHaveBeenCalledWith(expect.anything(), 'i10', 'expired')
+  })
+
   it('never expires anything when the block height is unknown', async () => {
     getBlockHeight.mockRejectedValue(new Error('rpc down'))
     reconcilableIntents.mockResolvedValue([{ ...base, id: 'i7', reference: 'R7', status: 'pending', txSignature: null }])
-    findTopUpSignature.mockResolvedValue(null)
+    findTopUpSignatures.mockResolvedValue([])
     expect(await handler(evt())).toEqual({ intents: [{ id: 'i7', status: 'pending' }] })
     expect(failIntent).not.toHaveBeenCalled()
   })
