@@ -19,10 +19,12 @@
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
+    "@solana/pay": "^0.2.6",
     "@solana/wallet-adapter-coinbase": "^0.1.23",
     "@solana/wallet-adapter-phantom": "^0.9.29",
     "@solana/wallet-adapter-solflare": "^0.6.33",
     "@solana/web3.js": "^1.98.4",
+    "bignumber.js": "^11.1.5",
     "bs58": "^6.0.0",
     "nuxt": "^4.5.2",
     "pg": "^8.16.3",
