@@ -34,7 +34,7 @@ describe('POST /api/chat', () => {
       auth: { wallet: 'W' }, rawBody: '{"model":"m"}', signal, emitUsageEvent: true,
     })
     expect(sendWebResponse).toHaveBeenCalledWith(evt, expect.any(Response))
-    expect(await (res as Response).text()).toBe('ok')
+    expect(await (res as unknown as Response).text()).toBe('ok')
   })
 
   it('treats an empty body as an empty string', async () => {
