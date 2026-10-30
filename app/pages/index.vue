@@ -1,5 +1,7 @@
 <script setup lang="ts">
+const { t } = useI18n()
 const { me, refreshMe } = useWalletAuth()
+useTheme()
 
 onMounted(() => { refreshMe() })
 
@@ -16,7 +18,7 @@ watch(() => me.value?.wallet, (wallet) => {
       <AuthSignInPanel />
       <BillingTopUpPanel />
       <template #fallback>
-        <p>Loading wallet…</p>
+        <p>{{ t('app.loadingWallet') }}</p>
       </template>
     </ClientOnly>
     <p v-if="me">Chat interface lands here.</p>

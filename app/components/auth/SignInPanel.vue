@@ -2,6 +2,7 @@
 import { useWallet } from 'solana-wallets-vue'
 
 const { wallets, select, connected, connecting, publicKey, disconnect } = useWallet()
+const { t } = useI18n()
 const { me, signIn, signOut } = useWalletAuth()
 
 const errorMsg = ref('')
@@ -37,7 +38,7 @@ async function onSignIn() {
     await signIn()
   } catch (err) {
     errorMsg.value = (err as { data?: { statusMessage?: string }, message?: string }).data?.statusMessage
-      ?? (err as Error).message ?? 'Sign-in failed'
+      ?? (err as Error).message ?? t('auth.signInFailed')
   } finally {
     busy.value = false
   }
@@ -52,19 +53,19 @@ async function onDisconnect() {
 <template>
   <section>
     <p v-if="inWalletBrowser && !me">
-      Conversations are stored only in this browser. Moving elsewhere? Use export / import.
+      {{ t('auth.walletBrowserHint') }}
     </p>
 
     <!-- Signed in -->
     <div v-if="me">
       <span>{{ shortAddress }}</span>
-      <button type="button" @click="onDisconnect">Sign out</button>
+      <button type="button" @click="onDisconnect">{{ t('auth.signOut') }}</button>
     </div>
 
     <!-- Wallet connected, not signed in -->
     <div v-else-if="connected && publicKey">
       <button type="button" :disabled="busy" @click="onSignIn">
-        {{ busy ? 'Signing in…' : 'Sign in with wallet' }}
+        {{ busy ? t('auth.signingIn') : t('auth.signIn') }}
       </button>
     </div>
 
@@ -77,18 +78,18 @@ async function onDisconnect() {
         :disabled="connecting"
         @click="select(w.adapter.name)"
       >
-        Connect {{ w.adapter.name }}
+        {{ t('auth.connect', { name: w.adapter.name }) }}
       </button>
     </div>
 
     <!-- No wallet available -->
     <div v-else>
-      <p>No Solana wallet detected.</p>
+      <p>{{ t('auth.noWallet') }}</p>
       <ul>
-        <li><a :href="deepLink('phantom')">Open in Phantom</a></li>
-        <li><a :href="deepLink('solflare')">Open in Solflare</a></li>
-        <li><a href="https://phantom.app/download" target="_blank" rel="noopener">Install Phantom</a></li>
-        <li><a href="https://solflare.com/download" target="_blank" rel="noopener">Install Solflare</a></li>
+        <li><a :href="deepLink('phantom')">{{ t('auth.openIn', { name: 'Phantom' }) }}</a></li>
+        <li><a :href="deepLink('solflare')">{{ t('auth.openIn', { name: 'Solflare' }) }}</a></li>
+        <li><a href="https://phantom.app/download" target="_blank" rel="noopener">{{ t('auth.install', { name: 'Phantom' }) }}</a></li>
+        <li><a href="https://solflare.com/download" target="_blank" rel="noopener">{{ t('auth.install', { name: 'Solflare' }) }}</a></li>
       </ul>
     </div>
 
