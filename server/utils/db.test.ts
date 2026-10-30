@@ -1,10 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { stubValidEnv } from '../../tests/helpers/env'
 
 beforeEach(() => {
-  vi.stubEnv('DATABASE_URL', 'postgres://localhost/test')
-  vi.stubEnv('SESSION_SECRET', 's'.repeat(32))
-  vi.stubEnv('VENICE_API_KEY', 'vk')
-  vi.stubEnv('BILLING', '')
+  stubValidEnv()
 })
 
 describe('getPool', () => {

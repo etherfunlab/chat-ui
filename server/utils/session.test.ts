@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { stubValidEnv } from '../../tests/helpers/env'
 
 const sessionData: { wallet?: string } = {}
 const capturedOptions: Record<string, unknown>[] = []
@@ -12,11 +13,7 @@ const { getSessionWallet } = await import('./session')
 const evt = {} as never
 
 beforeEach(() => {
-  vi.stubEnv('BILLING', '')
-  vi.stubEnv('ALLOWED_WALLETS', '')
-  vi.stubEnv('DATABASE_URL', 'postgres://x')
-  vi.stubEnv('SESSION_SECRET', 's'.repeat(32))
-  vi.stubEnv('VENICE_API_KEY', 'vk')
+  stubValidEnv()
   delete sessionData.wallet
 })
 
