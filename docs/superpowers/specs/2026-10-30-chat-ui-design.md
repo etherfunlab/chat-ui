@@ -124,11 +124,13 @@
 - 余额用整数 micro-USD 存（1 USDC 的最小单位 = 1 micro-USD），不用浮点。
 - 单价来源：Venice `GET /api/v1/models` 返回的 `model_spec.pricing`，服务端缓存、定期刷新。
   价格包括 input、output、cache_input、cache_write，以及超过 `context_token_threshold` 后的 `extended` 档。
-- 一次请求的成本 = 按上游返回的 `usage` 和上面的单价算出的上游实收，加上联网搜索费，再 ×（1 + 适用加价率）。
+- 一次请求的成本 = 上游实收 ×（1 + 适用加价率），向下取整：
+  - 上游响应报告了实收（`cost.usd + cost.diem`，均为美元等值，已含联网费）时，用它；
+  - 没报告时，按上游返回的 `usage` 和上面的单价算，再加联网搜索费。
 - 加价率按钱包定：`MARKUP_EXEMPT_WALLETS` 名单里的钱包为 0，其余用 `PRICE_MARKUP`。
   `chat.etherfun.xyz`：`PRICE_MARKUP=0.10`，自家钱包进免加价名单。
-- 联网搜索费：开了搜索的请求按次加收 `SEARCH_FEE_USD`（默认 0.01）。Venice 只在 x_search 上标了
-  约 $0.01/次，通用搜索没公布单价，也不在响应里报搜索次数，所以按请求计、费率可配；上游日后暴露实际次数再改按次。
+- 联网搜索费（只用于上游没报告实收时）：开了搜索的请求按次加收 `SEARCH_FEE_USD`（默认 0.01）。
+  `enable_web_search = on` 的请求算联网；`auto` 只在返回了引用时算。
 - **防透支**：转发前先冻结一笔上限额度，按「输入估算 + `max_tokens` × 输出单价」算，余额不够就直接拒。
   结束后按实际 usage 结算，退回差额。冻结与结算都在数据库事务里做。
 - **首字前只走一次数据库往返**：函数分布在 5 个区域，数据库只有一个区。转发前的鉴权（session 或 API key）

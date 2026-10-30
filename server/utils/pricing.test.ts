@@ -2,9 +2,19 @@ import { describe, it, expect } from 'vitest'
 import { ZERO_USAGE } from '#shared/billing'
 import type { Pricing } from '#shared/models'
 import {
-  affordableOutputTokens, computeHold, costMicro, estimateInputTokens, estimateTokens,
+  affordableOutputTokens, applyMarkup, computeHold, costMicro, estimateInputTokens, estimateTokens,
   IMAGE_TOKENS, MIN_OUTPUT_TOKENS,
 } from './pricing'
+
+describe('applyMarkup', () => {
+  it('applies basis points to a micro-USD amount, rounding down', () => {
+    expect(applyMarkup(420, 1000)).toBe(462)
+    expect(applyMarkup(1, 1000)).toBe(1)
+    expect(applyMarkup(9, 1000)).toBe(9)
+    expect(applyMarkup(10, 1000)).toBe(11)
+    expect(applyMarkup(12345, 0)).toBe(12345)
+  })
+})
 
 const opus: Pricing = { input: 4, output: 20, cacheInput: 0.2, cacheWrite: 5 }
 const sol: Pricing = { input: 2, output: 10, extended: { threshold: 272000, input: 4, output: 15 } }
