@@ -53,6 +53,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if ((import.meta as { main?: boolean }).main) {
   await main()
 }

@@ -4,7 +4,9 @@ vi.stubGlobal('createError', (e: Record<string, unknown>) => Object.assign(new E
 
 const headers = new Map<string, string>()
 vi.stubGlobal('getHeader', (_e: unknown, name: string) => headers.get(name))
-vi.stubGlobal('getRequestURL', () => new URL('https://chat.test/api/auth/verify'))
+
+let appOrigin = 'https://chat.test'
+vi.mock('#server/utils/appOrigin', () => ({ getAppUrl: () => new URL(appOrigin) }))
 
 const { assertSameOrigin } = await import('./sameOrigin')
 const evt = {} as never
@@ -28,5 +30,15 @@ describe('assertSameOrigin', () => {
     expect(() => assertSameOrigin(evt)).not.toThrow()
     headers.clear()
     expect(() => assertSameOrigin(evt)).toThrow(expect.objectContaining({ statusCode: 403 }))
+  })
+
+  it('compares against the configured app origin, not spoofable forwarded headers', () => {
+    appOrigin = 'https://chat.example.com'
+    headers.clear()
+    headers.set('origin', 'https://evil.example')
+    expect(() => assertSameOrigin(evt)).toThrow(expect.objectContaining({ statusCode: 403 }))
+    headers.set('origin', 'https://chat.example.com')
+    expect(() => assertSameOrigin(evt)).not.toThrow()
+    appOrigin = 'https://chat.test'
   })
 })

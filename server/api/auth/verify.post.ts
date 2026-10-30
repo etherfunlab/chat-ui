@@ -1,5 +1,7 @@
 import { buildSignInMessage, isValidSolanaAddress, verifySignInSignature } from '#shared/siws'
 import { assertSameOrigin } from '#server/utils/sameOrigin'
+import { getAppUrl } from '#server/utils/appOrigin'
+import { consumeNonce } from '#server/utils/authNonces'
 import { getServerConfig } from '#server/utils/config'
 import { getPool } from '#server/utils/db'
 import { useAppSession } from '#server/utils/session'
@@ -18,22 +20,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const pool = getPool()
-  // Atomic consume: replay (used_at) and expiry guards live in this query.
-  const { rows } = await pool.query(
-    `UPDATE auth_nonces SET used_at = now()
-     WHERE nonce = $1 AND wallet = $2 AND used_at IS NULL AND expires_at > now()
-     RETURNING issued_at`,
-    [body.nonce, body.wallet],
-  )
-  const row = rows[0] as { issued_at: Date } | undefined
-  if (!row) throw createError({ statusCode: 401, statusMessage: 'Invalid or expired nonce' })
+  const consumed = await consumeNonce(pool, body.nonce, body.wallet)
+  if (!consumed) throw createError({ statusCode: 401, statusMessage: 'Invalid or expired nonce' })
 
-  const domain = getRequestURL(event, { xForwardedHost: true, xForwardedProto: true }).host
   const message = buildSignInMessage({
-    domain,
+    domain: getAppUrl(event).host,
     address: body.wallet,
     nonce: body.nonce,
-    issuedAt: new Date(row.issued_at).toISOString(),
+    issuedAt: consumed.issuedAt,
   })
   if (!verifySignInSignature({ message, signatureB58: body.signature, address: body.wallet })) {
     throw createError({ statusCode: 401, statusMessage: 'Signature verification failed' })

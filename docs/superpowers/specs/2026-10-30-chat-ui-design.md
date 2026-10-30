@@ -178,7 +178,7 @@
 ### 上游请求的固定设置
 
 - 不注入 Venice 自带的系统提示词（`include_venice_system_prompt: false`）。模型行为只由用户的系统提示词决定。
-- Venice key 只在 Nitro 的 `runtimeConfig` 里，所有上游请求由服务端转发。
+- Venice key 只在服务端环境变量里，所有上游请求由服务端转发。
 
 ### 图片上传
 

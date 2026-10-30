@@ -1,6 +1,8 @@
 import bs58 from 'bs58'
 import { buildSignInMessage, isValidSolanaAddress } from '#shared/siws'
 import { assertSameOrigin } from '#server/utils/sameOrigin'
+import { getAppUrl } from '#server/utils/appOrigin'
+import { insertNonce } from '#server/utils/authNonces'
 import { getPool } from '#server/utils/db'
 
 interface Body {
@@ -18,13 +20,9 @@ export default defineEventHandler(async (event) => {
   // issued_at is inserted explicitly (not DEFAULT now()) so verify can rebuild
   // the exact signed message from the stored row.
   const issuedAt = new Date().toISOString()
-  await getPool().query(
-    `INSERT INTO auth_nonces (nonce, wallet, issued_at, expires_at)
-     VALUES ($1, $2, $3, now() + interval '10 minutes')`,
-    [nonce, body.wallet, issuedAt],
-  )
+  await insertNonce(getPool(), { nonce, wallet: body.wallet, issuedAt })
 
-  const domain = getRequestURL(event, { xForwardedHost: true, xForwardedProto: true }).host
+  const domain = getAppUrl(event).host
   const message = buildSignInMessage({ domain, address: body.wallet, nonce, issuedAt })
   return { message, nonce }
 })

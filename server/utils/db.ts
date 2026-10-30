@@ -5,7 +5,15 @@ let pool: pg.Pool | undefined
 
 export function getPool(): pg.Pool {
   if (!pool) {
-    pool = new pg.Pool({ connectionString: getServerConfig().databaseUrl })
+    // Small cap: many serverless instances share one Postgres endpoint, so
+    // point DATABASE_URL at a pooled connection string (e.g. Neon's -pooler).
+    pool = new pg.Pool({ connectionString: getServerConfig().databaseUrl, max: 3 })
+    // pg-pool re-emits idle-client errors on the pool; without a listener the
+    // process dies. Providers drop idle connections routinely. Message only —
+    // never payloads.
+    pool.on('error', (err) => {
+      console.error('[db] idle client error:', err.message)
+    })
   }
   return pool
 }

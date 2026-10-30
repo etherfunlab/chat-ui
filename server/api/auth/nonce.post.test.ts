@@ -6,12 +6,11 @@ import { buildSignInMessage } from '#shared/siws'
 vi.stubGlobal('defineEventHandler', (h: unknown) => h)
 vi.stubGlobal('readBody', (event: { _body: unknown }) => event._body)
 vi.stubGlobal('createError', (e: Record<string, unknown>) => Object.assign(new Error(String(e.statusMessage)), e))
-vi.stubGlobal('getRequestURL', () => new URL('https://chat.test/api/auth/nonce'))
-
 const assertSameOrigin = vi.fn()
-const query = vi.fn(async () => ({ rows: [] }))
+const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }))
 vi.mock('#server/utils/sameOrigin', () => ({ assertSameOrigin }))
 vi.mock('#server/utils/db', () => ({ getPool: () => ({ query }) }))
+vi.mock('#server/utils/appOrigin', () => ({ getAppUrl: () => new URL('https://chat.test/') }))
 
 const { default: handler } = await import('./nonce.post')
 const evt = (body: unknown) => ({ _body: body }) as never
@@ -27,8 +26,9 @@ describe('POST /api/auth/nonce', () => {
 
   it('stores the nonce and returns the exact message to sign', async () => {
     const out = await handler(evt({ wallet }))
-    expect(query).toHaveBeenCalledWith(expect.stringMatching(/INSERT INTO auth_nonces/i), expect.any(Array))
-    const [, params] = query.mock.calls[0] as unknown as [string, unknown[]]
+    const insert = query.mock.calls.find(([sql]) => /INSERT INTO auth_nonces/i.test(sql as unknown as string))
+    expect(insert).toBeDefined()
+    const [, params] = insert as unknown as [string, unknown[]]
     expect(params[0]).toBe(out.nonce)
     expect(params[1]).toBe(wallet)
     expect(out.message).toBe(buildSignInMessage({

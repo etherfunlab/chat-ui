@@ -6,8 +6,6 @@ import { buildSignInMessage } from '#shared/siws'
 vi.stubGlobal('defineEventHandler', (h: unknown) => h)
 vi.stubGlobal('readBody', (event: { _body: unknown }) => event._body)
 vi.stubGlobal('createError', (e: Record<string, unknown>) => Object.assign(new Error(String(e.statusMessage)), e))
-vi.stubGlobal('getRequestURL', () => new URL('https://chat.test/api/auth/verify'))
-
 const assertSameOrigin = vi.fn()
 const getServerConfig = vi.fn()
 const query = vi.fn()
@@ -18,6 +16,7 @@ vi.mock('#server/utils/db', () => ({ getPool: () => ({ query }) }))
 vi.mock('#server/utils/session', () => ({
   useAppSession: async () => ({ data: {}, update: sessionUpdate, clear: vi.fn() }),
 }))
+vi.mock('#server/utils/appOrigin', () => ({ getAppUrl: () => new URL('https://chat.test/') }))
 
 const { default: handler } = await import('./verify.post')
 const evt = (body: unknown) => ({ _body: body }) as never

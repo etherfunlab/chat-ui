@@ -1,11 +1,12 @@
 import type { H3Event } from 'h3'
+import { getAppUrl } from './appOrigin'
 
 /**
  * Session-cookie endpoints accept only same-origin browser requests.
- * X-Forwarded-* is honored so proxied deployments compare the public origin.
+ * The reference origin comes from getAppUrl (PUBLIC_ORIGIN when configured).
  */
 export function assertSameOrigin(event: H3Event): void {
-  const reqUrl = getRequestURL(event, { xForwardedHost: true, xForwardedProto: true })
+  const reqUrl = getAppUrl(event)
   const source = getHeader(event, 'origin') ?? getHeader(event, 'referer')
   if (!source) {
     throw createError({ statusCode: 403, statusMessage: 'Missing Origin/Referer' })

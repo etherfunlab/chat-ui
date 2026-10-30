@@ -8,13 +8,21 @@ export function useAppSession(event: H3Event) {
     name: 'cu_session',
     password: getServerConfig().sessionSecret,
     maxAge: SESSION_MAX_AGE_SECONDS,
+    sessionHeader: false, // the session is a cookie, never a request header
     cookie: { httpOnly: true, secure: true, sameSite: 'lax' },
   })
 }
 
 export async function getSessionWallet(event: H3Event): Promise<string | null> {
   const session = await useAppSession(event)
-  return session.data.wallet ?? null
+  const wallet = session.data.wallet ?? null
+  if (!wallet) return null
+  // Sealed cookies are stateless, so the BILLING=off whitelist is re-checked
+  // on every use: removing a wallet from ALLOWED_WALLETS revokes it now, not
+  // in 30 days.
+  const config = getServerConfig()
+  if (config.billing === 'off' && !config.allowedWallets.has(wallet)) return null
+  return wallet
 }
 
 export async function requireWallet(event: H3Event): Promise<string> {
