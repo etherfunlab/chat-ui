@@ -13,6 +13,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // PGlite boot + migrations in beforeAll can exceed the 10s default under
+    // a parallel full-suite run.
+    hookTimeout: 60_000,
     include: [
       'app/**/*.test.ts',
       'server/**/*.test.ts',

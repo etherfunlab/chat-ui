@@ -1,22 +1,61 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { getServerConfig } from './config'
-
-const BASE_ENV = {
-  BILLING: '',
-  DATABASE_URL: 'postgres://x',
-  SESSION_SECRET: 's'.repeat(32),
-  VENICE_API_KEY: 'vk',
-  ALLOWED_WALLETS: '',
-  SOLANA_RPC_URL: '',
-  SOLANA_TREASURY: '',
-  PRICE_MARKUP: '',
-  MARKUP_EXEMPT_WALLETS: '',
-  SEARCH_FEE_USD: '',
-  PUBLIC_ORIGIN: '',
-}
+import { getServerConfig, markupBpsFor } from './config'
+import { stubValidEnv, TEST_TREASURY } from '../../tests/helpers/env'
 
 beforeEach(() => {
-  for (const [k, v] of Object.entries(BASE_ENV)) vi.stubEnv(k, v)
+  stubValidEnv()
+})
+
+describe('getServerConfig — billing and models', () => {
+  it('defaults models to the spec list in order', () => {
+    expect(getServerConfig().models).toEqual([
+      'claude-opus-5-5',
+      'deepseek-v4-1-flash-1017-uncensored',
+      'grok-4-7',
+      'gemini-4-argon',
+      'openai-gpt-6-astra-pro',
+      'openai-gpt-61-sol',
+      'openai-gpt-61-sol-ultrafast',
+      'openai-gpt-61-terra',
+    ])
+  })
+
+  it('parses MODELS and defaults the Venice base URL and USDC mint', () => {
+    vi.stubEnv('MODELS', ' a , b ')
+    const c = getServerConfig()
+    expect(c.models).toEqual(['a', 'b'])
+    expect(c.veniceBaseUrl).toBe('https://api.venice.ai/api/v1')
+    expect(c.usdcMint).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+    expect(c.solanaTreasury).toBe(TEST_TREASURY)
+  })
+
+  it('requires a valid treasury and RPC URL when billing is on', () => {
+    vi.stubEnv('SOLANA_TREASURY', '')
+    expect(() => getServerConfig()).toThrow(/SOLANA_TREASURY/)
+    vi.stubEnv('SOLANA_TREASURY', 'not-an-address')
+    expect(() => getServerConfig()).toThrow(/SOLANA_TREASURY/)
+    vi.stubEnv('SOLANA_TREASURY', TEST_TREASURY)
+    vi.stubEnv('SOLANA_RPC_URL', '')
+    expect(() => getServerConfig()).toThrow(/SOLANA_RPC_URL/)
+    vi.stubEnv('SOLANA_RPC_URL', 'not a url')
+    expect(() => getServerConfig()).toThrow(/SOLANA_RPC_URL/)
+  })
+
+  it('does not require Solana settings when billing is off', () => {
+    vi.stubEnv('BILLING', 'off')
+    vi.stubEnv('ALLOWED_WALLETS', 'W1')
+    vi.stubEnv('SOLANA_TREASURY', '')
+    vi.stubEnv('SOLANA_RPC_URL', '')
+    expect(getServerConfig().billing).toBe('off')
+  })
+
+  it('markupBpsFor exempts listed wallets', () => {
+    vi.stubEnv('PRICE_MARKUP', '0.10')
+    vi.stubEnv('MARKUP_EXEMPT_WALLETS', 'VIP')
+    const c = getServerConfig()
+    expect(markupBpsFor(c, 'VIP')).toBe(0)
+    expect(markupBpsFor(c, 'someone')).toBe(1000)
+  })
 })
 
 describe('getServerConfig', () => {

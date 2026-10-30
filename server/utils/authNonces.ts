@@ -1,6 +1,4 @@
-export interface Queryable {
-  query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>
-}
+import type { Queryable } from './queryable'
 
 /**
  * Inserts a sign-in nonce (10-minute expiry) and opportunistically purges

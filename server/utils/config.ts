@@ -1,23 +1,56 @@
+import { isValidSolanaAddress } from '#shared/siws'
+
 export interface ServerConfig {
   billing: 'on' | 'off'
   databaseUrl: string
   sessionSecret: string
   veniceApiKey: string
+  veniceBaseUrl: string
+  /** Upstream model ids offered, in display order. */
+  models: string[]
   allowedWallets: Set<string>
   markupBps: number
   markupExemptWallets: Set<string>
   searchFeeMicro: number
   solanaRpcUrl: string
   solanaTreasury: string
+  usdcMint: string
   /** Normalized origin (e.g. "https://chat.example.com") or undefined. */
   publicOrigin?: string
 }
+
+const DEFAULT_MODELS = [
+  'claude-opus-5-5',
+  'deepseek-v4-1-flash-1017-uncensored',
+  'grok-4-7',
+  'gemini-4-argon',
+  'openai-gpt-6-astra-pro',
+  'openai-gpt-61-sol',
+  'openai-gpt-61-sol-ultrafast',
+  'openai-gpt-61-terra',
+]
+
+const MAINNET_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
 /** This value once shipped in .env.example; it lives in public git history. */
 const BANNED_SECRETS = new Set(['change-me-to-a-random-string-of-32+'])
 
 function splitList(v: string | undefined): Set<string> {
   return new Set((v ?? '').split(',').map(s => s.trim()).filter(Boolean))
+}
+
+function isUrl(v: string): boolean {
+  try {
+    new URL(v)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Markup that applies to a wallet: exempt wallets pay upstream cost as-is. */
+export function markupBpsFor(config: ServerConfig, wallet: string): number {
+  return config.markupExemptWallets.has(wallet) ? 0 : config.markupBps
 }
 
 /** Parses a decimal knob and scales it to a non-negative safe integer. */
@@ -70,17 +103,31 @@ export function getServerConfig(): ServerConfig {
     throw new Error('PUBLIC_ORIGIN is required in production outside Vercel')
   }
 
+  const solanaRpcUrl = env.SOLANA_RPC_URL ?? ''
+  const solanaTreasury = env.SOLANA_TREASURY ?? ''
+  if (billing === 'on') {
+    if (!isUrl(solanaRpcUrl)) throw new Error('BILLING=on requires SOLANA_RPC_URL to be a URL')
+    if (!isValidSolanaAddress(solanaTreasury)) {
+      throw new Error('BILLING=on requires SOLANA_TREASURY to be a Solana address')
+    }
+  }
+
+  const models = [...splitList(env.MODELS)]
+
   return {
     billing,
     databaseUrl: env.DATABASE_URL,
     sessionSecret,
     veniceApiKey: env.VENICE_API_KEY,
+    veniceBaseUrl: env.VENICE_BASE_URL || 'https://api.venice.ai/api/v1',
+    models: models.length ? models : DEFAULT_MODELS,
     allowedWallets,
     markupBps: parseScaled('PRICE_MARKUP', env.PRICE_MARKUP, '0', 10_000),
     markupExemptWallets: splitList(env.MARKUP_EXEMPT_WALLETS),
     searchFeeMicro: parseScaled('SEARCH_FEE_USD', env.SEARCH_FEE_USD, '0.01', 1_000_000),
-    solanaRpcUrl: env.SOLANA_RPC_URL ?? '',
-    solanaTreasury: env.SOLANA_TREASURY ?? '',
+    solanaRpcUrl,
+    solanaTreasury,
+    usdcMint: env.SOLANA_USDC_MINT || MAINNET_USDC_MINT,
     publicOrigin,
   }
 }

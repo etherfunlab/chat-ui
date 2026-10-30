@@ -14,6 +14,9 @@ export default defineNuxtConfig({
     externals: {
       inline: ['jayson'],
     },
+    // Server code uses BigInt literals for exact money math; match the
+    // function runtime instead of esbuild's es2019 default.
+    esbuild: { options: { target: 'node24' } },
     // Bump together with engines.node and the CI node version.
     vercel: { functions: { runtime: 'nodejs24.x' } },
   },
