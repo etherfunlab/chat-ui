@@ -30,6 +30,7 @@
     "bignumber.js": "^11.1.5",
     "bs58": "^6.0.0",
     "dexie": "^4.4.5",
+    "markdown-it": "^14",
     "nuxt": "^4.5.2",
     "pg": "^8.16.3",
     "pinia": "^3.0.4",
@@ -40,8 +41,10 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.13",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.15.4",
+    "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.4.11",
     "fake-indexeddb": "^6",
     "happy-dom": "^21.0.4",

@@ -31,5 +31,15 @@ export default {
   },
   "app": {
     "loadingWallet": "Loading wallet…"
+  },
+  "chat": {
+    "thinking": "Thinking…",
+    "thoughtFor": "Thought for {s} s",
+    "waiting": "Waiting for the model…",
+    "copy": "Copy",
+    "copied": "Copied",
+    "stopped": "Stopped",
+    "meta": "{tokens} tokens · {cost}",
+    "imageNotSent": "Image not sent | {n} images not sent"
   }
 }

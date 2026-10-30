@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { formatUsd } from './money'
+import { formatCost, formatUsd } from './money'
+
+describe('formatCost', () => {
+  it('shows small per-answer charges to a tenth of a cent, truncated', () => {
+    expect(formatCost('6524')).toBe('$0.0065')
+    expect(formatCost('51000')).toBe('$0.051')
+    expect(formatCost('1230000')).toBe('$1.23')
+    expect(formatCost('0')).toBe('$0')
+    expect(formatCost('40')).toBe('<$0.0001')
+  })
+})
 
 describe('formatUsd', () => {
   it('formats micro-USD as dollars, truncated to cents', () => {
