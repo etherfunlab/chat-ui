@@ -1,35 +1,16 @@
 // Integration tests: the real nonce SQL against a real Postgres (PGlite),
 // with the real migration files applied.
 import { describe, it, expect, beforeAll } from 'vitest'
-import { readdir, readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
-import { PGlite } from '@electric-sql/pglite'
-import { runMigrations } from '../../scripts/migrate'
+import type { PGlite } from '@electric-sql/pglite'
+import { createTestDb } from '../../tests/helpers/pg'
+import type { Queryable } from './queryable'
 import { insertNonce, consumeNonce } from './authNonces'
 
-const pglite = new PGlite()
-
-// PGlite's query() is a prepared statement (single statement only); route
-// param-less SQL (multi-statement migration files) through exec().
-const db = {
-  query: async (sql: string, params?: unknown[]) => {
-    if (params?.length) return pglite.query(sql, params)
-    const results = await pglite.exec(sql)
-    return results.at(-1) ?? { rows: [] }
-  },
-}
+let db: Queryable
+let pglite: PGlite
 
 beforeAll(async () => {
-  const dir = fileURLToPath(new URL('../db/migrations', import.meta.url))
-  const files = await Promise.all(
-    (await readdir(dir)).filter(n => n.endsWith('.sql')).map(async name => ({
-      name,
-      sql: await readFile(join(dir, name), 'utf8'),
-    })),
-  )
-  const applied = await runMigrations(db as never, files)
-  expect(applied.length).toBeGreaterThanOrEqual(1)
+  ;({ db, pglite } = await createTestDb())
 })
 
 const issuedAt = '2026-10-30T10:00:00.123Z'
