@@ -30,7 +30,7 @@ function deps(over: Record<string, unknown> = {}) {
 describe('performTopUp', () => {
   it('requests an intent, signs it with the wallet, and submits the signed bytes', async () => {
     const d = deps()
-    expect(await performTopUp(d as never)).toEqual({ status: 'confirmed', creditedMicro: '10000000' })
+    expect(await performTopUp(d as never)).toEqual({ status: 'confirmed', creditedMicro: '10000000', intentId: 'i1' })
     expect(d.fetcher).toHaveBeenNthCalledWith(1, '/api/topup/intent', { method: 'POST', body: { amount: '10' } })
     expect(d.signTransaction).toHaveBeenCalledTimes(1)
     const [, opts] = d.fetcher.mock.calls[1] as unknown as [string, { body: { intentId: string, signedTxBase64: string } }]

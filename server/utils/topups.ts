@@ -44,13 +44,22 @@ export async function createIntent(
   )
 }
 
-/** Atomically moves the caller's own pending intent to submitting. */
-export async function claimIntent(db: Queryable, id: string, wallet: string): Promise<TopUpIntent | null> {
+/**
+ * Atomically moves the caller's own pending intent to submitting and records
+ * the signature of the transaction about to be broadcast, so a send that
+ * fails ambiguously can still be found and credited later.
+ */
+export async function claimIntent(
+  db: Queryable,
+  id: string,
+  wallet: string,
+  signature: string,
+): Promise<TopUpIntent | null> {
   const { rows } = await db.query(
-    `UPDATE topup_intents SET status = 'submitting'
+    `UPDATE topup_intents SET status = 'submitting', tx_signature = $3
      WHERE id = $1 AND wallet = $2 AND status = 'pending'
      RETURNING ${COLUMNS}`,
-    [id, wallet],
+    [id, wallet, signature],
   )
   return rows[0] ? toIntent(rows[0]) : null
 }
@@ -60,13 +69,15 @@ export async function getIntentStatus(db: Queryable, id: string, wallet: string)
   return (rows[0]?.status as TopUpStatus | undefined) ?? null
 }
 
-/** Returns a claimed intent to pending (the broadcast never happened). */
+/**
+ * Returns a claimed intent to pending after the cluster definitively rejected
+ * its transaction, forgetting that signature so the user can sign again.
+ */
 export async function releaseClaim(db: Queryable, id: string): Promise<void> {
-  await db.query(`UPDATE topup_intents SET status = 'pending' WHERE id = $1 AND status = 'submitting'`, [id])
-}
-
-export async function setSignature(db: Queryable, id: string, signature: string): Promise<void> {
-  await db.query('UPDATE topup_intents SET tx_signature = $2 WHERE id = $1', [id, signature])
+  await db.query(
+    `UPDATE topup_intents SET status = 'pending', tx_signature = NULL WHERE id = $1 AND status = 'submitting'`,
+    [id],
+  )
 }
 
 export async function failIntent(db: Queryable, id: string, reason: string): Promise<void> {

@@ -55,4 +55,16 @@ describe('POST /api/topup/intent', () => {
     await expect(handler(evt({ amount: '5' }))).rejects.toMatchObject({ statusCode: 402, data: { code: 'insufficient_funds' } })
     expect(createIntent).not.toHaveBeenCalled()
   })
+
+  it('maps a wallet that never held USDC or SOL to 402 insufficient_funds', async () => {
+    const cases = [
+      Object.assign(new Error(''), { name: 'TokenAccountNotFoundError' }),
+      Object.assign(new Error('sender not found'), { name: 'CreateTransferError' }),
+      Object.assign(new Error('sender not initialized'), { name: 'CreateTransferError' }),
+    ]
+    for (const err of cases) {
+      buildTopUpTransaction.mockRejectedValueOnce(err)
+      await expect(handler(evt({ amount: '5' })), err.name).rejects.toMatchObject({ statusCode: 402, data: { code: 'insufficient_funds' } })
+    }
+  })
 })

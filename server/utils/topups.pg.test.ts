@@ -4,7 +4,7 @@ import type { PGlite } from '@electric-sql/pglite'
 import { createTestDb } from '../../tests/helpers/pg'
 import type { Queryable } from './queryable'
 import {
-  claimIntent, createIntent, creditTopUp, failIntent, listIntents, reconcilableIntents, releaseClaim, setSignature,
+  claimIntent, createIntent, creditTopUp, failIntent, listIntents, reconcilableIntents, releaseClaim,
 } from './topups'
 
 let db: Queryable
@@ -44,13 +44,20 @@ describe('top-up intents', () => {
     expect(await balance()).toBe(1_000_000)
   })
 
-  it('claims only the owner’s pending intent, once', async () => {
+  it('claims only the owner’s pending intent, once, recording the signature', async () => {
     await createIntent(db, intent('i1'))
-    expect(await claimIntent(db, 'i1', 'X')).toBeNull()
-    expect((await claimIntent(db, 'i1', 'W'))?.reference).toBe('ref-i1')
-    expect(await claimIntent(db, 'i1', 'W')).toBeNull()
+    expect(await claimIntent(db, 'i1', 'X', 'SIGX')).toBeNull()
+    const claimed = await claimIntent(db, 'i1', 'W', 'SIG1')
+    expect(claimed).toMatchObject({ reference: 'ref-i1', status: 'submitting', txSignature: 'SIG1' })
+    expect(await claimIntent(db, 'i1', 'W', 'SIG1')).toBeNull()
+  })
+
+  it('release returns the intent to pending and forgets the rejected signature', async () => {
+    await createIntent(db, intent('i1'))
+    await claimIntent(db, 'i1', 'W', 'SIG1')
     await releaseClaim(db, 'i1')
-    expect(await claimIntent(db, 'i1', 'W')).not.toBeNull()
+    const again = await claimIntent(db, 'i1', 'W', 'SIG2')
+    expect(again).toMatchObject({ status: 'submitting', txSignature: 'SIG2' })
   })
 
   it('does not credit a failed intent', async () => {
@@ -62,8 +69,7 @@ describe('top-up intents', () => {
 
   it('lists reconcilable intents: submitting, and pending within the hour', async () => {
     await createIntent(db, intent('sub'))
-    await claimIntent(db, 'sub', 'W')
-    await setSignature(db, 'sub', 'SIGSUB')
+    await claimIntent(db, 'sub', 'W', 'SIGSUB')
     await createIntent(db, intent('fresh'))
     await createIntent(db, intent('old'))
     await pglite.exec(`UPDATE topup_intents SET created_at = now() - interval '2 hours' WHERE id = 'old'`)

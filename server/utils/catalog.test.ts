@@ -53,6 +53,15 @@ describe('toModelEntry', () => {
     expect(toModelEntry(r)!.reasoning.defaultEffort).toBe('low')
   })
 
+  it('rejects negative prices (a charge must never become a credit)', () => {
+    const r = structuredClone(raw('claude-opus-5-5'))
+    r.model_spec.pricing.output.usd = -20
+    expect(toModelEntry(r)).toBeNull()
+    const c = structuredClone(raw('claude-opus-5-5'))
+    c.model_spec.pricing.cache_input!.usd = -1
+    expect(toModelEntry(c)).toBeNull()
+  })
+
   it('returns null for malformed entries', () => {
     expect(toModelEntry(null)).toBeNull()
     expect(toModelEntry({ id: 'x' })).toBeNull()
@@ -89,6 +98,17 @@ describe('createCatalog', () => {
     const fetchModels = vi.fn()
       .mockResolvedValueOnce(fixture)
       .mockRejectedValueOnce(new Error('upstream down'))
+    const c = createCatalog({ fetchModels, modelIds: ['claude-opus-5-5'], ttlMs: 10, now: () => t })
+    await c.list()
+    t = 100
+    expect((await c.list()).map(m => m.id)).toEqual(['claude-opus-5-5'])
+  })
+
+  it('keeps the last good list when a refresh parses to nothing', async () => {
+    let t = 0
+    const fetchModels = vi.fn()
+      .mockResolvedValueOnce(fixture)
+      .mockResolvedValueOnce({ data: [] })
     const c = createCatalog({ fetchModels, modelIds: ['claude-opus-5-5'], ttlMs: 10, now: () => t })
     await c.list()
     t = 100

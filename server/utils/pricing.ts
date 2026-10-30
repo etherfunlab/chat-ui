@@ -35,9 +35,20 @@ export function costMicro(p: Pricing, u: Usage, o: { markupBps: number, searchFe
   return Number(scaled / (PICO * BPS))
 }
 
-/** ceil(UTF-8 bytes / 4): close for English, under-counts CJK — never over. */
+/**
+ * Token estimate used to size holds: ~4 ASCII characters per token, and every
+ * non-ASCII code point (CJK, emoji…) at least one token. Under-counting is the
+ * unsafe direction here — settle charges actual usage, so a short hold means
+ * an overdraft — hence CJK is not lumped into bytes/4.
+ */
 export function estimateTokens(text: string): number {
-  return Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
+  let ascii = 0
+  let other = 0
+  for (const ch of text) {
+    if (ch.codePointAt(0)! < 0x80) ascii++
+    else other++
+  }
+  return Math.ceil(ascii / 4) + other
 }
 
 /** Walks a request payload: strings by estimateTokens, image parts at IMAGE_TOKENS each. */

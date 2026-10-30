@@ -1,9 +1,10 @@
+import { SendTransactionError } from '@solana/web3.js'
 import { assertSameOrigin } from '#server/utils/sameOrigin'
 import { requireWallet } from '#server/utils/session'
 import { assertBillingOn } from '#server/utils/billingGate'
 import { getPool } from '#server/utils/db'
-import { getSolanaConnection, verifyTopUp } from '#server/utils/solana'
-import { claimIntent, creditTopUp, failIntent, getIntentStatus, releaseClaim, setSignature } from '#server/utils/topups'
+import { getSolanaConnection, signatureOf, verifyTopUp } from '#server/utils/solana'
+import { claimIntent, creditTopUp, failIntent, getIntentStatus, releaseClaim } from '#server/utils/topups'
 
 interface Body {
   intentId: string
@@ -19,8 +20,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing fields' })
   }
 
+  let signature: string
+  try {
+    signature = signatureOf(body.signedTxBase64)
+  } catch {
+    throw createError({ statusCode: 400, statusMessage: 'Not a signed transaction' })
+  }
+
   const db = getPool()
-  const intent = await claimIntent(db, body.intentId, wallet)
+  const intent = await claimIntent(db, body.intentId, wallet, signature)
   if (!intent) {
     const status = await getIntentStatus(db, body.intentId, wallet)
     if (!status) throw createError({ statusCode: 404, statusMessage: 'Intent not found' })
@@ -28,18 +36,24 @@ export default defineEventHandler(async (event) => {
   }
 
   const connection = getSolanaConnection()
-  let signature: string
   try {
-    signature = await connection.sendRawTransaction(Buffer.from(body.signedTxBase64, 'base64'), {
+    await connection.sendRawTransaction(Buffer.from(body.signedTxBase64, 'base64'), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     })
   } catch (err) {
+    // Only an RPC error response is a definitive rejection. Anything else
+    // (timeout, reset, gateway error) may have reached the cluster: keep the
+    // intent submitting with its signature, and let reconcile settle it.
+    if (!(err instanceof SendTransactionError)) return { status: 'submitting' as const }
     await releaseClaim(db, intent.id)
-    if (/blockhash|expired/i.test((err as Error).message ?? '')) return { status: 'expired' as const }
-    throw createError({ statusCode: 502, statusMessage: 'Broadcast failed' })
+    const msg = err.message
+    if (/blockhash not found|block height exceeded/i.test(msg)) return { status: 'expired' as const }
+    if (/insufficient funds|insufficient lamports|no record of a prior credit/i.test(msg)) {
+      throw createError({ statusCode: 402, statusMessage: 'Insufficient funds', data: { code: 'insufficient_funds' } })
+    }
+    throw createError({ statusCode: 400, statusMessage: 'Transaction rejected' })
   }
-  await setSignature(db, intent.id, signature)
 
   try {
     await connection.confirmTransaction(
@@ -47,7 +61,8 @@ export default defineEventHandler(async (event) => {
       'confirmed',
     )
   } catch {
-    // Broadcast succeeded; confirmation is just slow. Reconcile finishes it.
+    // Slow, or dropped: reconcile verifies it, or expires it once the
+    // blockhash can no longer land.
     return { status: 'submitting' as const }
   }
 
@@ -65,5 +80,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const credited = await creditTopUp(db, intent.id, signature)
+  if (credited === 0) {
+    // Settled concurrently (by reconcile): report what actually happened.
+    return { status: (await getIntentStatus(db, intent.id, wallet)) ?? 'failed' }
+  }
   return { status: 'confirmed' as const, creditedMicro: String(credited) }
 })

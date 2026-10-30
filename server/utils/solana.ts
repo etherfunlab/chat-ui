@@ -1,7 +1,8 @@
-import { Connection, Keypair, PublicKey, type Transaction } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, VersionedTransaction, type Transaction } from '@solana/web3.js'
 import { createTransfer, findReference } from '@solana/pay'
 import type { Amount } from '@solana/pay'
 import BigNumber from 'bignumber.js'
+import bs58 from 'bs58'
 import { getServerConfig } from './config'
 
 const USDC_DECIMALS = 6
@@ -108,12 +109,34 @@ export async function verifyTopUp(
   }
 }
 
-/** Finds a payment by its reference key (reconcile when the signature was lost). */
+/**
+ * Finds a payment by its reference key (reconcile when the signature was lost).
+ * Returns null only when the chain has no transaction with that reference; an
+ * RPC failure throws, so callers never read "unreachable" as "never paid".
+ */
 export async function findTopUpSignature(connection: Connection, reference: string): Promise<string | null> {
   try {
     const info = await findReference(connection, new PublicKey(reference), { finality: 'confirmed' })
     return info.signature
-  } catch {
-    return null
+  } catch (err) {
+    if ((err as Error).name === 'FindReferenceError') return null
+    throw err
   }
+}
+
+/** Whether the cluster has any record of a signature (searching history). RPC errors throw. */
+export async function signatureLanded(connection: Connection, signature: string): Promise<boolean> {
+  const { value } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })
+  return value[0] != null
+}
+
+/**
+ * The fee-payer signature of signed transaction bytes — the id the cluster will
+ * know it by — computed before broadcasting so it is never lost to a failed send.
+ */
+export function signatureOf(signedTxBase64: string): string {
+  const tx = VersionedTransaction.deserialize(Buffer.from(signedTxBase64, 'base64'))
+  const sig = tx.signatures[0]
+  if (!sig || sig.every(b => b === 0)) throw new Error('transaction is not signed')
+  return bs58.encode(sig)
 }

@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import bs58 from 'bs58'
 
 const createTransfer = vi.fn()
 const findReference = vi.fn()
 vi.mock('@solana/pay', () => ({ createTransfer, findReference }))
 
-const { usdcBaseUnits, verifyTopUp, buildTopUpTransaction, findTopUpSignature } = await import('./solana')
+const {
+  usdcBaseUnits, verifyTopUp, buildTopUpTransaction, findTopUpSignature, signatureLanded, signatureOf,
+} = await import('./solana')
 
 const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const OTHER_MINT = Keypair.generate().publicKey.toBase58()
@@ -136,10 +139,41 @@ describe('buildTopUpTransaction', () => {
 })
 
 describe('findTopUpSignature', () => {
-  it('returns the signature or null', async () => {
+  it('returns the signature, or null only when the chain has none', async () => {
     findReference.mockResolvedValueOnce({ signature: 'SIG1' })
     expect(await findTopUpSignature({} as never, REFERENCE)).toBe('SIG1')
-    findReference.mockRejectedValueOnce(new Error('not found'))
+    findReference.mockRejectedValueOnce(Object.assign(new Error('not found'), { name: 'FindReferenceError' }))
     expect(await findTopUpSignature({} as never, REFERENCE)).toBeNull()
+  })
+
+  it('throws on RPC failures so callers never mistake them for "no payment"', async () => {
+    findReference.mockRejectedValueOnce(new Error('429 Too Many Requests'))
+    await expect(findTopUpSignature({} as never, REFERENCE)).rejects.toThrow(/429/)
+  })
+})
+
+describe('signatureLanded', () => {
+  it('reports whether the cluster has any record of the signature', async () => {
+    const c = (value: unknown) => ({ getSignatureStatuses: vi.fn(async () => ({ value: [value] })) }) as never
+    expect(await signatureLanded(c(null), 'SIG')).toBe(false)
+    expect(await signatureLanded(c({ confirmationStatus: 'confirmed', err: null }), 'SIG')).toBe(true)
+  })
+})
+
+describe('signatureOf', () => {
+  it('derives the fee-payer signature from signed transaction bytes', () => {
+    const payer = Keypair.generate()
+    const tx = new Transaction().add(SystemProgram.transfer({
+      fromPubkey: payer.publicKey, toPubkey: new PublicKey(TREASURY), lamports: 1,
+    }))
+    tx.feePayer = payer.publicKey
+    tx.recentBlockhash = Keypair.generate().publicKey.toBase58()
+    tx.sign(payer)
+    const b64 = Buffer.from(tx.serialize()).toString('base64')
+    expect(signatureOf(b64)).toBe(bs58.encode(tx.signature!))
+  })
+
+  it('throws on bytes that are not a signed transaction', () => {
+    expect(() => signatureOf(Buffer.from('garbage').toString('base64'))).toThrow()
   })
 })

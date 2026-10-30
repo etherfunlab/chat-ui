@@ -13,9 +13,15 @@ interface Body {
   amount: string
 }
 
+/**
+ * The wallet cannot fund this transfer: too little USDC, no USDC token account
+ * at all, or no SOL (the system account does not exist yet).
+ */
 function isInsufficientFunds(err: unknown): boolean {
-  const e = err as { message?: string, cause?: { message?: string } }
-  return /insufficient funds/i.test(e?.message ?? '') || /insufficient funds/i.test(e?.cause?.message ?? '')
+  const e = err as { name?: string, message?: string, cause?: { message?: string } }
+  if (e?.name === 'TokenAccountNotFoundError') return true
+  const text = `${e?.message ?? ''} ${e?.cause?.message ?? ''}`
+  return /insufficient funds|sender not found|sender not initialized/i.test(text)
 }
 
 export default defineEventHandler(async (event) => {

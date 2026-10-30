@@ -55,6 +55,12 @@ describe('costMicro', () => {
 })
 
 describe('estimates', () => {
+  it('counts every non-ASCII code point as at least one token (holds must not under-count CJK)', () => {
+    expect(estimateTokens('你好世界你好世界')).toBe(8)
+    expect(estimateTokens('hello 你好')).toBe(2 + 2) // ceil(6 ASCII bytes / 4) + 2
+    expect(estimateTokens('😀')).toBe(1)
+  })
+
   it('estimates CJK and images', () => {
     expect(estimateTokens('你好')).toBe(2)
     expect(estimateTokens('abcd')).toBe(1)

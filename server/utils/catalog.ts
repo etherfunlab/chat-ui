@@ -5,17 +5,23 @@ type Obj = Record<string, unknown>
 
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-const usd = (v: unknown): number | undefined => (isObj(v) ? num(v.usd) : undefined)
+/** A price must be a finite, non-negative USD amount: a negative one would turn a charge into a credit. */
+const usd = (v: unknown): number | undefined => {
+  const n = isObj(v) ? num(v.usd) : undefined
+  return n !== undefined && n >= 0 ? n : undefined
+}
 
 function toTier(p: Obj): PriceTier | null {
   const input = usd(p.input)
   const output = usd(p.output)
   if (input === undefined || output === undefined) return null
   const tier: PriceTier = { input, output }
-  const cacheInput = usd(p.cache_input)
-  const cacheWrite = usd(p.cache_write)
-  if (cacheInput !== undefined) tier.cacheInput = cacheInput
-  if (cacheWrite !== undefined) tier.cacheWrite = cacheWrite
+  for (const [field, key] of [['cache_input', 'cacheInput'], ['cache_write', 'cacheWrite']] as const) {
+    if (p[field] === undefined) continue
+    const price = usd(p[field])
+    if (price === undefined) return null // present but invalid: distrust the whole entry
+    tier[key] = price
+  }
   return tier
 }
 
@@ -95,7 +101,10 @@ export function createCatalog(o: {
         const entry = toModelEntry(item)
         if (entry) byId.set(entry.id, entry)
       }
-      cached = o.modelIds.map(id => byId.get(id)).filter((m): m is ModelEntry => m !== undefined)
+      const fresh = o.modelIds.map(id => byId.get(id)).filter((m): m is ModelEntry => m !== undefined)
+      // An empty parse is an upstream anomaly, not "no models": keep the last good list.
+      if (fresh.length === 0) throw new Error('no configured models in upstream response')
+      cached = fresh
       loadedAt = now()
     } catch (err) {
       if (!cached) throw new Error(`model catalog unavailable: ${(err as Error).message}`)
