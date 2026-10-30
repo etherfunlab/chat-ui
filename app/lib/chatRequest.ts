@@ -29,7 +29,12 @@ const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length
  * ever dropped to fit — oldest first, each replaced by a visible placeholder —
  * and only as many as the model accepts are sent; text is never truncated.
  */
-export function buildChatRequest(i: BuildInput): { body: ChatRequestBody, omittedImageMessageIds: string[] } {
+export function buildChatRequest(i: BuildInput): {
+  body: ChatRequestBody
+  omittedImageMessageIds: string[]
+  /** Images not sent, per message id. */
+  omittedCounts: Record<string, number>
+} {
   const history = i.history.filter(m =>
     (m.status === 'done' || m.status === 'aborted') && (m.text.trim() !== '' || m.images.length > 0))
 
@@ -41,7 +46,7 @@ export function buildChatRequest(i: BuildInput): { body: ChatRequestBody, omitte
 
   const assemble = () => {
     const keptSet = new Set(kept)
-    const omitted = new Set<string>()
+    const omitted = new Map<string, number>()
     const messages: ChatMessage[] = []
     if (i.systemPrompt?.trim()) messages.push({ role: 'system', content: i.systemPrompt })
     for (const m of history) {
@@ -52,7 +57,7 @@ export function buildChatRequest(i: BuildInput): { body: ChatRequestBody, omitte
       const mine = all.filter(a => a.messageId === m.id)
       const send = mine.filter(a => keptSet.has(a))
       const dropped = mine.length - send.length
-      if (dropped > 0) omitted.add(m.id)
+      if (dropped > 0) omitted.set(m.id, dropped)
       const text = m.text + `\n${IMAGE_OMITTED}`.repeat(dropped)
       messages.push(send.length === 0
         ? { role: 'user', content: text }
@@ -73,7 +78,7 @@ export function buildChatRequest(i: BuildInput): { body: ChatRequestBody, omitte
       ...(effort ? { reasoning_effort: effort } : {}),
       venice_parameters: { enable_web_search: search ? 'on' : 'off', enable_web_citations: search },
     }
-    return { body, omittedImageMessageIds: [...omitted] }
+    return { body, omittedImageMessageIds: [...omitted.keys()], omittedCounts: Object.fromEntries(omitted) }
   }
 
   let out = assemble()
