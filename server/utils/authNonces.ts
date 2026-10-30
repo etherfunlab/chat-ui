@@ -5,13 +5,21 @@ export interface Queryable {
 /**
  * Inserts a sign-in nonce (10-minute expiry) and opportunistically purges
  * long-expired rows: the endpoint is unauthenticated, so the table would
- * otherwise grow without bound.
+ * otherwise grow without bound. The purge is capped per call and skips rows
+ * another request is already deleting, so a flood cannot turn each sign-in
+ * into an unbounded, contended DELETE.
  */
 export async function insertNonce(
   db: Queryable,
   p: { nonce: string, wallet: string, issuedAt: string },
 ): Promise<void> {
-  await db.query(`DELETE FROM auth_nonces WHERE expires_at < now() - interval '1 hour'`)
+  await db.query(
+    `DELETE FROM auth_nonces WHERE nonce IN (
+       SELECT nonce FROM auth_nonces
+       WHERE expires_at < now() - interval '1 hour'
+       LIMIT 100 FOR UPDATE SKIP LOCKED
+     )`,
+  )
   await db.query(
     `INSERT INTO auth_nonces (nonce, wallet, issued_at, expires_at)
      VALUES ($1, $2, $3, now() + interval '10 minutes')`,

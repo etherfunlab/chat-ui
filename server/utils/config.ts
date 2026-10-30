@@ -20,12 +20,14 @@ function splitList(v: string | undefined): Set<string> {
   return new Set((v ?? '').split(',').map(s => s.trim()).filter(Boolean))
 }
 
-function parseMoney(name: string, raw: string | undefined, fallback: string): number {
-  const value = Number(raw || fallback)
-  if (!Number.isFinite(value) || value < 0) {
+/** Parses a decimal knob and scales it to a non-negative safe integer. */
+function parseScaled(name: string, raw: string | undefined, fallback: string, scale: number): number {
+  const text = raw?.trim() || fallback
+  const scaled = Math.round(Number(text) * scale)
+  if (!Number.isSafeInteger(scaled) || scaled < 0) {
     throw new Error(`${name} must be a non-negative number, got "${raw}"`)
   }
-  return value
+  return scaled
 }
 
 /**
@@ -61,6 +63,11 @@ export function getServerConfig(): ServerConfig {
     } catch {
       throw new Error(`PUBLIC_ORIGIN must be a URL, got "${env.PUBLIC_ORIGIN}"`)
     }
+  } else if (env.NODE_ENV === 'production' && env.VERCEL !== '1') {
+    // Without it the signing domain comes from Host / X-Forwarded-* headers,
+    // which a phishing relay controls on any self-hosted setup. Vercel routes
+    // by Host and overwrites X-Forwarded-Host itself, so it may fall back.
+    throw new Error('PUBLIC_ORIGIN is required in production outside Vercel')
   }
 
   return {
@@ -69,9 +76,9 @@ export function getServerConfig(): ServerConfig {
     sessionSecret,
     veniceApiKey: env.VENICE_API_KEY,
     allowedWallets,
-    markupBps: Math.round(parseMoney('PRICE_MARKUP', env.PRICE_MARKUP, '0') * 10_000),
+    markupBps: parseScaled('PRICE_MARKUP', env.PRICE_MARKUP, '0', 10_000),
     markupExemptWallets: splitList(env.MARKUP_EXEMPT_WALLETS),
-    searchFeeMicro: Math.round(parseMoney('SEARCH_FEE_USD', env.SEARCH_FEE_USD, '0.01') * 1_000_000),
+    searchFeeMicro: parseScaled('SEARCH_FEE_USD', env.SEARCH_FEE_USD, '0.01', 1_000_000),
     solanaRpcUrl: env.SOLANA_RPC_URL ?? '',
     solanaTreasury: env.SOLANA_TREASURY ?? '',
     publicOrigin,

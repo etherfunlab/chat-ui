@@ -24,5 +24,5 @@ export default defineEventHandler(async (event) => {
 
   const domain = getAppUrl(event).host
   const message = buildSignInMessage({ domain, address: body.wallet, nonce, issuedAt })
-  return { message, nonce }
+  return { message, nonce, issuedAt }
 })

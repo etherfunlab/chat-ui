@@ -31,8 +31,9 @@ describe('POST /api/auth/nonce', () => {
     const [, params] = insert as unknown as [string, unknown[]]
     expect(params[0]).toBe(out.nonce)
     expect(params[1]).toBe(wallet)
+    expect(out.issuedAt).toBe(params[2])
     expect(out.message).toBe(buildSignInMessage({
-      domain: 'chat.test', address: wallet, nonce: out.nonce, issuedAt: params[2] as string,
+      domain: 'chat.test', address: wallet, nonce: out.nonce, issuedAt: out.issuedAt,
     }))
   })
 })

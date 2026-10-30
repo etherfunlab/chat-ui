@@ -91,6 +91,39 @@ describe('getServerConfig', () => {
     expect(() => getServerConfig()).toThrow(/SEARCH_FEE_USD/)
   })
 
+  it('requires PUBLIC_ORIGIN in production outside Vercel', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('VERCEL', '')
+    expect(() => getServerConfig()).toThrow(/PUBLIC_ORIGIN/)
+    vi.stubEnv('PUBLIC_ORIGIN', 'https://chat.example.com')
+    expect(getServerConfig().publicOrigin).toBe('https://chat.example.com')
+  })
+
+  it('allows a request-derived origin on Vercel and in development', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('VERCEL', '1')
+    expect(getServerConfig().publicOrigin).toBeUndefined()
+    vi.stubEnv('VERCEL', '')
+    vi.stubEnv('NODE_ENV', 'development')
+    expect(getServerConfig().publicOrigin).toBeUndefined()
+  })
+
+  it('rejects money knobs that overflow to non-integers', () => {
+    vi.stubEnv('PRICE_MARKUP', '1e308')
+    expect(() => getServerConfig()).toThrow(/PRICE_MARKUP/)
+    vi.stubEnv('PRICE_MARKUP', '0')
+    vi.stubEnv('SEARCH_FEE_USD', '1e308')
+    expect(() => getServerConfig()).toThrow(/SEARCH_FEE_USD/)
+  })
+
+  it('treats whitespace-only money knobs as unset (defaults apply)', () => {
+    vi.stubEnv('PRICE_MARKUP', '   ')
+    vi.stubEnv('SEARCH_FEE_USD', '  ')
+    const c = getServerConfig()
+    expect(c.markupBps).toBe(0)
+    expect(c.searchFeeMicro).toBe(10000)
+  })
+
   it('normalizes PUBLIC_ORIGIN to an origin and rejects junk', () => {
     vi.stubEnv('PUBLIC_ORIGIN', 'https://chat.example.com/some/path')
     expect(getServerConfig().publicOrigin).toBe('https://chat.example.com')

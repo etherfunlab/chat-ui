@@ -55,6 +55,19 @@ describe('nonce lifecycle against real SQL', () => {
     expect(await consumeNonce(db as never, 'n3', 'W1')).toBeDefined()
   })
 
+  it('bounds the purge to 100 expired rows per insert', async () => {
+    await db.query(`DELETE FROM auth_nonces`)
+    await pglite.query(
+      `INSERT INTO auth_nonces (nonce, wallet, issued_at, expires_at)
+       SELECT 'flood-' || g, 'W9', now(), now() - interval '2 hours' FROM generate_series(1, 150) g`,
+    )
+    await insertNonce(db as never, { nonce: 'after-flood', wallet: 'W1', issuedAt })
+    const { rows } = await pglite.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM auth_nonces WHERE nonce LIKE 'flood-%'`,
+    )
+    expect(rows[0]!.n).toBe(50)
+  })
+
   it('purges rows expired more than an hour ago on insert', async () => {
     await insertNonce(db as never, { nonce: 'old', wallet: 'W1', issuedAt })
     await db.query(`UPDATE auth_nonces SET expires_at = now() - interval '2 hours' WHERE nonce = 'old'`)
