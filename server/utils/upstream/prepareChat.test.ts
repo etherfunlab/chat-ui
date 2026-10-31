@@ -26,6 +26,10 @@ function rejects(body: unknown, code: string, status = 400) {
 
 describe('prepareChat — validation', () => {
   it('rejects an unknown model', () => rejects(base({ model: 'nope' }), 'model_not_found'))
+  it('rejects a non-string model without throwing anything else', () => {
+    rejects(base({ model: { toString: null } }), 'model_not_found')
+    rejects(base({ model: 42 }), 'model_not_found')
+  })
   it('rejects a non-object body, empty messages and unknown roles', () => {
     rejects('x', 'invalid_request')
     rejects(base({ messages: [] }), 'invalid_request')

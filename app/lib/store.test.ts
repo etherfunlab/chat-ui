@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach } from 'vitest'
 import { ZERO_USAGE } from '#shared/billing'
-import { createStore, type ChatStore, type StoredMessage, type StoredSession } from './store'
+import { createStore, MAX_IMPORT_SESSIONS, type ChatStore, type StoredMessage, type StoredSession } from './store'
 
 let store: ChatStore
 let n = 0
@@ -143,6 +143,11 @@ describe('export / import', () => {
     expect(b!.citations).toEqual([{ title: 'ok', url: 'https://ok.example' }])
     expect(b!.usage).toBeNull()
     expect(b!.status).toBe('done')
+  })
+
+  it('rejects an import with more sessions than the limit', async () => {
+    const sessions = Array.from({ length: MAX_IMPORT_SESSIONS + 1 }, (_, i) => ({ ...session({ id: `bulk${i}` }), messages: [] }))
+    await expect(store.importSessions('W', { format: 'chat-ui-export', version: 1, exportedAt: 'x', sessions })).rejects.toThrow()
   })
 
   it('rejects a file of another format or version', async () => {

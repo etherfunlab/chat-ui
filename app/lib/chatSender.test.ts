@@ -102,6 +102,16 @@ describe('createChatSender', () => {
     expect(await store.listMessages('s')).toEqual([])
   })
 
+  it('refuses to send into a chat that was deleted', async () => {
+    await store.deleteSession('s')
+    const stream = vi.fn()
+    const { s } = sender(stream)
+    await s.send({ session: session(), model: OPUS, text: 'x', images: [], systemPrompt: null, signal: new AbortController().signal, onUpdate() {} })
+    expect(stream).not.toHaveBeenCalled()
+    expect(await store.getSession('s')).toBeUndefined()
+    expect(await store.listMessages('s')).toEqual([])
+  })
+
   it('records how many images a message could not send', async () => {
     const textOnly: ModelEntry = { ...OPUS, vision: false, maxImages: 0 }
     const { s } = sender(async () => {})

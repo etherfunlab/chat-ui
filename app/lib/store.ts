@@ -44,6 +44,11 @@ interface StoredSetting {
   value: string
 }
 
+/** Import limits: a crafted file must not exhaust the browser. */
+export const MAX_IMPORT_SESSIONS = 5_000
+export const MAX_IMPORT_MESSAGES = 20_000
+export const MAX_IMPORT_BYTES = 200 * 1024 * 1024
+
 export interface ExportFile {
   format: 'chat-ui-export'
   version: 1
@@ -200,6 +205,7 @@ export function createStore(dbName = 'chat-ui'): ChatStore {
       if (!isObj(file) || file.format !== 'chat-ui-export' || file.version !== 1 || !Array.isArray(file.sessions)) {
         throw new Error('Not a chat-ui export file')
       }
+      if (file.sessions.length > MAX_IMPORT_SESSIONS) throw new Error('Too many chats in one file')
       let imported = 0
       let copied = 0
       await db.transaction('rw', db.sessions, db.messages, async () => {
@@ -207,6 +213,7 @@ export function createStore(dbName = 'chat-ui'): ChatStore {
           const s = sanitizeSession(raw)
           if (!s) continue
           const { messages, ...rest } = s
+          if (messages.length > MAX_IMPORT_MESSAGES) throw new Error('Too many messages in one chat')
           const exists = (await db.sessions.get(rest.id)) !== undefined
           const sessionId = exists ? crypto.randomUUID() : rest.id
           await db.sessions.put({ ...rest, id: sessionId, wallet, title: exists ? `${rest.title} (copy)` : rest.title })

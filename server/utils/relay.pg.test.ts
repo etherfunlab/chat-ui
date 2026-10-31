@@ -190,6 +190,65 @@ describe('relayChat — streaming', () => {
   })
 })
 
+describe('relayChat — stream robustness', () => {
+  it('settles an upstream success without a body as an error', async () => {
+    const upstream: RelayDeps['upstream'] = async () => new Response(null, { status: 204 })
+    await (await relayChat(deps(upstream), req(body()))).text()
+    expect(await lastRecord()).toMatchObject({ status: 'error' })
+    expect((await account()).held).toBe(0)
+  })
+
+  it('treats a stream that ends without [DONE] or finish_reason as cut short', async () => {
+    const { upstream } = scripted([chunk({ content: 'half an ans' })])
+    const text = await (await relayChat(deps(upstream), req(body()))).text()
+    expect(text).not.toContain('data: [DONE]')
+    expect(await lastRecord()).toMatchObject({ status: 'aborted' })
+  })
+
+  it('completes when finish_reason arrives even without [DONE]', async () => {
+    const { upstream } = scripted([`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'all' }, finish_reason: 'stop' }] })}\n\n`])
+    const text = await (await relayChat(deps(upstream), req(body()))).text()
+    expect(text.trimEnd().endsWith('data: [DONE]')).toBe(true)
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+  })
+
+  it('stops at the upstream [DONE]', async () => {
+    const { upstream } = scripted([chunk({ content: 'answer' }), DONE, chunk({ content: 'AFTER-DONE' })])
+    const text = await (await relayChat(deps(upstream), req(body()))).text()
+    expect(text).not.toContain('AFTER-DONE')
+  })
+
+  it('forwards upstream comments such as keepalives', async () => {
+    const { upstream } = scripted([': keepalive\n\n', chunk({ content: 'x' }), DONE])
+    expect(await (await relayChat(deps(upstream), req(body()))).text()).toContain(': keepalive\n\n')
+  })
+
+  it('terminates an unterminated last event before injecting its own', async () => {
+    const { upstream } = scripted([chunk({ content: 'x' }), `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}`])
+    const text = await (await relayChat(deps(upstream), req(body()))).text()
+    expect(text).toMatch(/"finish_reason":"stop"\}\]\}\n\nevent: chatui-usage\n/)
+  })
+
+  it('withholds the usage event when settlement keeps failing', async () => {
+    const failing: Queryable = {
+      query: (sql: string, params?: unknown[]) => (sql.includes('settle_charge') ? Promise.reject(new Error('db down')) : db.query(sql, params)),
+    }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 1, completion_tokens: 1 }), DONE])
+    const text = await (await relayChat(deps(upstream, { db: failing }), req(body()))).text()
+    expect(text).not.toContain('chatui-usage')
+    expect(errors).toHaveBeenCalled()
+    errors.mockRestore()
+  })
+
+  it('never lets a stalled error body hold up settlement', async () => {
+    const upstream: RelayDeps['upstream'] = async () => new Response(new ReadableStream({ start() {} }), { status: 500 })
+    const res = await relayChat(deps(upstream, { errorBodyMs: 50 }), req(body()))
+    expect(res.status).toBe(502)
+    expect(await lastRecord()).toMatchObject({ status: 'error' })
+  })
+})
+
 describe('relayChat — holds and limits', () => {
   it('caps max_completion_tokens to what the hold affords', async () => {
     await pglite.exec(`UPDATE accounts SET balance_micro = 50000 WHERE wallet = 'W'`)
@@ -242,8 +301,16 @@ describe('relayChat — holds and limits', () => {
 })
 
 describe('relayChat — billing rules', () => {
+  it('caps an implausible reported cost at twice the token-price cost', async () => {
+    const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }, { usd: 100 }), DONE])
+    await (await relayChat(deps(upstream), req(body()))).text()
+    // token-price cost 800 micro → cap 1600, ×1.1
+    expect((await account()).balance).toBe(1_000_000 - 1760)
+  })
+
   it('applies the wallet markup at settlement', async () => {
-    const script = () => scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 1, completion_tokens: 1 }, { usd: 0.001 }), DONE])
+    // 100 in / 20 out = 800 micro at list prices; the reported 1000 is within the 2× cap.
+    const script = () => scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }, { usd: 0.001 }), DONE])
     await (await relayChat(deps(script().upstream), req(body(), { auth: { wallet: 'VIP' } }))).text()
     expect((await account('VIP')).balance).toBe(1_000_000 - 1000)
     await (await relayChat(deps(script().upstream), req(body()))).text()

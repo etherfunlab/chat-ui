@@ -36,6 +36,12 @@ export function createChatSender(deps: SenderDeps) {
 
   async function send(i: SendInput): Promise<StoredMessage> {
     const { store } = deps
+    const deleted = (): StoredMessage => ({
+      id: deps.newId(), sessionId: i.session.id, role: 'assistant', text: '', images: [], reasoning: '',
+      reasoningMs: null, citations: [], usage: null, status: 'error', error: 'This chat was deleted.',
+      omittedImages: 0, model: i.model.id, createdAt: deps.now(),
+    })
+    if (!(await store.getSession(i.session.id))) return deleted()
     const history = await store.listMessages(i.session.id)
     const user: StoredMessage = {
       id: deps.newId(), sessionId: i.session.id, role: 'user', text: i.text, images: i.images,
@@ -44,7 +50,12 @@ export function createChatSender(deps: SenderDeps) {
     }
     await store.putMessage(user)
 
-    const current = (await store.getSession(i.session.id)) ?? i.session
+    const current = await store.getSession(i.session.id)
+    if (!current) {
+      // Deleted while this turn was starting: remove what we just wrote.
+      await store.deleteSession(i.session.id)
+      return deleted()
+    }
     const title = current.title || i.text.trim().slice(0, TITLE_LENGTH) || 'Image'
     await store.putSession({ ...current, title, updatedAt: deps.now() })
 

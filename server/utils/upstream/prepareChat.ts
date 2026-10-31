@@ -48,7 +48,9 @@ function positiveInt(v: unknown, name: string): number | undefined {
 export function prepareChat(body: unknown, models: ModelEntry[]): PreparedChat {
   if (!isObj(body)) throw bad('Request body must be a JSON object')
   const model = models.find(m => m.id === body.model)
-  if (!model) throw bad(`Unknown model: ${String(body.model)}`, 'model_not_found')
+  if (!model) {
+    throw bad(`Unknown model: ${typeof body.model === 'string' ? body.model : '(not a string)'}`, 'model_not_found')
+  }
 
   const messages = body.messages
   if (!Array.isArray(messages) || messages.length === 0) throw bad('messages must be a non-empty array')

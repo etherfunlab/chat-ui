@@ -25,6 +25,8 @@ export interface RelayDeps {
   newId: () => string
   /** Overrides RELAY_MAX_MS (tests). */
   maxMs?: number
+  /** How long to wait for an upstream error body (default 5 s). */
+  errorBodyMs?: number
 }
 
 export type RelayAuth = { wallet: string } | { keyHash: string }
@@ -66,6 +68,18 @@ function outputText(payload: unknown): string {
   }
   return s
 }
+
+function hasFinishReason(payload: unknown): boolean {
+  return isObj(payload) && Array.isArray(payload.choices)
+    && payload.choices.some(c => isObj(c) && typeof c.finish_reason === 'string' && c.finish_reason !== '')
+}
+
+/** A forwarded event must end with a blank line, or the next one merges into it. */
+function terminated(raw: string): string {
+  return /(\r\n\r\n|\n\n|\r\r)$/.test(raw) ? raw : `${raw.replace(/[\r\n]*$/, '')}\n\n`
+}
+
+const SETTLE_BACKOFF_MS = [0, 100, 400]
 
 function isUsageOnly(payload: unknown): boolean {
   return isObj(payload) && isObj(payload.usage) && (!Array.isArray(payload.choices) || payload.choices.length === 0)
@@ -168,25 +182,33 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
     seen.output += outputText(payload)
   }
 
-  let settling: Promise<ChatUsageEvent> | null = null
+  let settling: Promise<{ event: ChatUsageEvent, settled: boolean }> | null = null
   const finish = (status: SettleStatus, charge: boolean) => settling ??= (async () => {
     const webSearch = prepared.webSearch === 'on' || (prepared.webSearch === 'auto' && seen.citations.length > 0)
     const usage: Usage = charge
       ? { ...(seen.usage ?? { ...ZERO_USAGE, inputTokens, outputTokens: estimateTokens(seen.output) }), webSearch }
       : { ...ZERO_USAGE }
     const markupBps = markupBpsFor(config, wallet)
-    const cost = !charge ? 0
-      : seen.reported !== null ? applyMarkup(seen.reported, markupBps)
-        : costMicro(pricing, usage, { markupBps, searchFeeMicro: config.searchFeeMicro })
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const tokenCost = costMicro(pricing, usage, { markupBps: 0, searchFeeMicro: config.searchFeeMicro })
+    // The upstream's own figure is the charge, but never more than twice what
+    // the published prices imply: a malformed or hostile cost field must not
+    // push a balance deep below zero.
+    const upstreamCost = seen.reported !== null ? Math.min(seen.reported, tokenCost * 2) : tokenCost
+    const cost = charge ? applyMarkup(upstreamCost, markupBps) : 0
+
+    for (let attempt = 0; attempt < SETTLE_BACKOFF_MS.length; attempt++) {
+      if (SETTLE_BACKOFF_MS[attempt]) await new Promise(r => setTimeout(r, SETTLE_BACKOFF_MS[attempt]))
       try {
         await settleCharge(db, { id, status, costMicro: cost, billing, usage })
-        break
+        return { event: { usage, costMicro: String(cost) }, settled: true }
       } catch (err) {
-        if (attempt === 1) console.error(`[relay] settle failed for ${id}: ${(err as Error).message}`)
+        if (attempt === SETTLE_BACKOFF_MS.length - 1) {
+          // Metering only (no content): enough for the operator to reconcile by hand.
+          console.error(`[relay] settle failed for charge ${id} (wallet ${wallet}, ${status}, ${cost} micro-USD): ${(err as Error).message}`)
+        }
       }
     }
-    return { usage, costMicro: String(cost) }
+    return { event: { usage, costMicro: String(cost) }, settled: false }
   })()
 
   // A streamed answer stops when the client leaves (the reader saves the rest).
@@ -215,8 +237,13 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
   }
   if (!res.ok) {
     cleanup()
-    const text = await res.text().catch(() => '')
+    // Settle first: a stalled error body must not keep the hold open.
     await finish('error', false)
+    const text = await Promise.race([
+      res.text().catch(() => ''),
+      new Promise<string>(r => setTimeout(() => r(''), deps.errorBodyMs ?? 5_000)),
+    ])
+    res.body?.cancel().catch(() => {})
     return upstreamErrorResponse(res.status, text, config.veniceApiKey)
   }
 
@@ -234,7 +261,7 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
     }
   }
 
-  const upstreamBody = res.body!
+  const upstreamBody = res.body
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
   const stream = new ReadableStream<Uint8Array>({
@@ -246,39 +273,60 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
           // client already gone
         }
       }
+      let upstreamDone = false
+      let finished = false
       const parser = createSseParser((e) => {
-        if (e.data === '[DONE]') return // re-sent after settlement
+        if (upstreamDone) return // nothing counts after the upstream's [DONE]
+        if (e.data === '[DONE]') {
+          upstreamDone = true // re-sent after settlement
+          return
+        }
         let payload: unknown
         try {
           payload = JSON.parse(e.data)
         } catch {
-          send(e.raw)
+          send(terminated(e.raw))
           return
         }
         collect(payload)
+        if (hasFinishReason(payload)) finished = true
         if (isUsageOnly(payload) && !prepared.clientWantsUsage) return
-        send(e.raw)
+        send(terminated(e.raw))
+      }, (raw) => {
+        if (!upstreamDone) send(terminated(raw)) // keepalives keep proxies and clients waiting
       })
 
-      let status: SettleStatus = 'ok'
-      const reader = upstreamBody.getReader()
-      try {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          parser.push(decoder.decode(value, { stream: true }))
+      let status: SettleStatus
+      let charge = true
+      if (!upstreamBody) {
+        status = 'error' // a success status with no stream: nothing was produced
+        charge = false
+      } else {
+        try {
+          const reader = upstreamBody.getReader()
+          while (!upstreamDone) {
+            const { done, value } = await reader.read()
+            if (done) break
+            parser.push(decoder.decode(value, { stream: true }))
+          }
+          if (upstreamDone) reader.cancel().catch(() => {})
+          else {
+            parser.push(decoder.decode())
+            parser.end()
+          }
+          // An answer is complete only when the upstream said so; a stream that
+          // simply ends was cut short, and is settled (and reported) as such.
+          status = upstreamDone || finished ? 'ok' : 'aborted'
+        } catch {
+          // Client abort, time limit, or the upstream dropped mid-answer: the
+          // answer was cut short, and what it produced is still charged.
+          status = 'aborted'
         }
-        parser.push(decoder.decode())
-        parser.end()
-      } catch {
-        // Client abort, time limit, or the upstream dropped mid-answer: the
-        // answer was cut short, and what it produced is still charged.
-        status = 'aborted'
       }
       cleanup()
-      const event = await finish(status, true)
+      const { event, settled } = await finish(status, charge)
       if (status === 'ok') {
-        if (req.emitUsageEvent) send(`event: chatui-usage\ndata: ${JSON.stringify(event)}\n\n`)
+        if (req.emitUsageEvent && settled) send(`event: chatui-usage\ndata: ${JSON.stringify(event)}\n\n`)
         send('data: [DONE]\n\n')
       }
       try {

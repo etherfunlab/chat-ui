@@ -27,9 +27,13 @@ function parseEvent(raw: string): SseEvent | null {
 /**
  * Incremental Server-Sent Events parser. Network chunks may split an event
  * anywhere — mid-line, mid-JSON, between CR and LF — so input is buffered
- * until a blank line closes the event.
+ * until a blank line closes the event. Events without data (comments such as
+ * keepalives) go to `onOther` as raw text, so a relay can pass them through.
  */
-export function createSseParser(onEvent: (e: SseEvent) => void): { push(chunk: string): void, end(): void } {
+export function createSseParser(
+  onEvent: (e: SseEvent) => void,
+  onOther?: (raw: string) => void,
+): { push(chunk: string): void, end(): void } {
   let buffer = ''
   return {
     push(chunk) {
@@ -39,6 +43,7 @@ export function createSseParser(onEvent: (e: SseEvent) => void): { push(chunk: s
         buffer = buffer.slice(raw.length)
         const e = parseEvent(raw)
         if (e) onEvent(e)
+        else onOther?.(raw)
       }
     },
     end() {

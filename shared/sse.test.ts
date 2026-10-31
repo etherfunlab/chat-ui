@@ -39,6 +39,15 @@ describe('createSseParser', () => {
     expect(events.map(e => e.data)).toEqual(['x'])
   })
 
+  it('hands comment-only events to the optional second callback', () => {
+    const other: string[] = []
+    const events: string[] = []
+    const parser = createSseParser(e => events.push(e.data), raw => other.push(raw))
+    parser.push(': keepalive\n\ndata: x\n\n')
+    expect(other).toEqual([': keepalive\n\n'])
+    expect(events).toEqual(['x'])
+  })
+
   it('emits several events from one chunk and flushes a trailing event on end()', () => {
     const { events, parser } = collect()
     parser.push('data: 1\n\ndata: 2\n\ndata: 3')

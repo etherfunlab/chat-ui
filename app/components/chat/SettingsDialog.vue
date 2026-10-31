@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { downloadJson } from '~/lib/download'
-import type { StoredSession } from '~/lib/store'
+import { MAX_IMPORT_BYTES, type StoredSession } from '~/lib/store'
 import type { ThemePref } from '~/composables/useTheme'
 
 const props = defineProps<{ open: boolean, wallet: string, session: StoredSession | null, globalPrompt: string }>()
@@ -41,6 +41,10 @@ async function importChats(e: Event): Promise<void> {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  if (file.size > MAX_IMPORT_BYTES) {
+    notice.value = t('settings.importFailed')
+    return
+  }
   try {
     const result = await store.importSessions(props.wallet, JSON.parse(await file.text()))
     notice.value = t('settings.imported', result)
