@@ -1,5 +1,7 @@
 <script setup lang="ts">
+const { t } = useI18n()
 const { me, refreshMe } = useWalletAuth()
+useTheme()
 
 onMounted(() => { refreshMe() })
 
@@ -10,15 +12,16 @@ watch(() => me.value?.wallet, (wallet) => {
 </script>
 
 <template>
-  <main>
-    <h1>chat-ui</h1>
-    <ClientOnly>
-      <AuthSignInPanel />
-      <BillingTopUpPanel />
-      <template #fallback>
-        <p>Loading wallet…</p>
-      </template>
-    </ClientOnly>
-    <p v-if="me">Chat interface lands here.</p>
-  </main>
+  <ClientOnly>
+    <ChatAppShell v-if="me" :key="me.wallet" :wallet="me.wallet" />
+    <main v-else class="grid min-h-dvh place-items-center p-6">
+      <div class="grid w-full max-w-sm gap-6">
+        <h1 class="text-[1.6rem] font-bold">chat-ui</h1>
+        <AuthSignInPanel />
+      </div>
+    </main>
+    <template #fallback>
+      <p class="p-6 text-ink-muted">{{ t('app.loadingWallet') }}</p>
+    </template>
+  </ClientOnly>
 </template>

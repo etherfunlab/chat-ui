@@ -37,6 +37,11 @@ function rawPico(p: Pricing, u: Usage, searchFeeMicro: number): bigint {
   return total
 }
 
+/** floor(micro × (1 + markup)) — for an upstream-reported cost. */
+export function applyMarkup(micro: number, markupBps: number): number {
+  return Number((BigInt(micro) * (BPS + BigInt(markupBps))) / BPS)
+}
+
 /** floor((upstream cost + search fee) × (1 + markup)), in micro-USD. */
 export function costMicro(p: Pricing, u: Usage, o: { markupBps: number, searchFeeMicro: number }): number {
   const scaled = rawPico(p, u, o.searchFeeMicro) * (BPS + BigInt(o.markupBps))

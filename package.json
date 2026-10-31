@@ -15,9 +15,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "nuxt prepare && vue-tsc --noEmit -p .nuxt/tsconfig.app.json && vue-tsc --noEmit -p .nuxt/tsconfig.server.json && vue-tsc --noEmit -p .nuxt/tsconfig.shared.json && vue-tsc --noEmit -p scripts/tsconfig.json",
-    "migrate": "bun run scripts/migrate.ts"
+    "migrate": "bun run scripts/migrate.ts",
+    "mock:upstream": "bun run scripts/mock-upstream.ts"
   },
   "dependencies": {
+    "@nuxt/fonts": "^0.14.0",
+    "@nuxtjs/i18n": "^9",
     "@pinia/nuxt": "^0.11.3",
     "@solana/pay": "^0.2.6",
     "@solana/wallet-adapter-coinbase": "^0.1.23",
@@ -26,6 +29,8 @@
     "@solana/web3.js": "^1.98.4",
     "bignumber.js": "^11.1.5",
     "bs58": "^6.0.0",
+    "dexie": "^4.4.5",
+    "markdown-it": "^14",
     "nuxt": "^4.5.2",
     "pg": "^8.16.3",
     "pinia": "^3.0.4",
@@ -36,9 +41,12 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.13",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.15.4",
+    "@vitejs/plugin-vue": "^6.0.10",
     "@vue/test-utils": "^2.4.11",
+    "fake-indexeddb": "^6",
     "happy-dom": "^21.0.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
