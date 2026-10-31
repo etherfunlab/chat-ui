@@ -39,6 +39,8 @@ export default defineNuxtConfig({
     esbuild: { options: { target: 'node24' } },
     // Bump together with engines.node and the CI node version. maxDuration
     // covers the relay's 10-minute cap on a single streamed answer.
-    vercel: { functions: { runtime: 'nodejs24.x', maxDuration: 800 } },
+    // supportsCancellation lets a Node function observe a client disconnect,
+    // so Stop actually stops the upstream instead of streaming into the void.
+    vercel: { functions: { runtime: 'nodejs24.x', maxDuration: 800, supportsCancellation: true } as Record<string, unknown> },
   },
 })

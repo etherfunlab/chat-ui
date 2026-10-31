@@ -68,6 +68,22 @@ describe('streamChat', () => {
     expect(onUsage).toHaveBeenCalledWith(usage)
   })
 
+  it('drops citations whose url is not http(s)', async () => {
+    const citations = [{ title: 'evil', url: 'javascript:alert(1)' }, { title: 'ok', url: 'https://ok.example' }]
+    const { p, onCitations } = run([
+      data({ choices: [{ index: 0, delta: { content: 'x' } }], venice_parameters: { web_search_citations: citations } }),
+      'data: [DONE]\n\n',
+    ])
+    await p
+    expect(onCitations).toHaveBeenCalledWith([{ title: 'ok', url: 'https://ok.example' }])
+  })
+
+  it('rejects a stream that ends without [DONE] (cut short by the server)', async () => {
+    const { p, deltas } = run([delta({ content: 'partial answer' })])
+    await expect(p).rejects.toMatchObject({ name: 'ChatApiError', code: 'stream_incomplete' })
+    expect(joined(deltas).text).toBe('partial answer')
+  })
+
   it('throws ChatApiError from an OpenAI-shaped error body', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Balance too low', type: 'x', code: 'insufficient_balance' } }), { status: 402 }))
     await expect(streamChat({ body, signal: new AbortController().signal, fetchImpl: fetchImpl as never, onDelta() {}, onCitations() {}, onUsage() {} }))

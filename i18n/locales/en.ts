@@ -62,7 +62,8 @@ export default {
     "no": "Cancel",
     "menu": "Chats",
     "settings": "Settings",
-    "modelsUnavailable": "Models are unavailable right now. Try again shortly."
+    "modelsUnavailable": "Models are unavailable right now. Try again shortly.",
+    "retry": "Try again"
   },
   "effort": {
     "off": "Off",

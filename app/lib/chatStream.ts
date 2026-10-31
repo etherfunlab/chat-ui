@@ -1,6 +1,7 @@
 import type { ChatRequestBody, ChatUsageEvent, Citation } from '#shared/chat'
 import { createSseParser } from '#shared/sse'
 import { createThinkSplitter } from '#shared/think'
+import { safeHttpUrl } from '#shared/url'
 
 export class ChatApiError extends Error {
   constructor(
@@ -40,8 +41,8 @@ async function toApiError(res: Response): Promise<ChatApiError> {
 /**
  * Streams one answer from /api/chat. Reasoning arrives either as
  * `reasoning_content` deltas or as <think> spans inside content; both are
- * routed to `reasoning`. Rejects with ChatApiError on an error response, or
- * with the abort error when `signal` fires.
+ * routed to `reasoning`. Rejects with ChatApiError on an error response or a
+ * stream cut short, or with the abort error when `signal` fires.
  */
 export async function streamChat(o: StreamOptions): Promise<void> {
   const res = await (o.fetchImpl ?? fetch)('/api/chat', {
@@ -55,6 +56,7 @@ export async function streamChat(o: StreamOptions): Promise<void> {
 
   const splitter = createThinkSplitter()
   let citationsSent = false
+  let sawDone = false
   const emit = (text: string, reasoning: string) => {
     if (text || reasoning) o.onDelta({ text, reasoning })
   }
@@ -64,7 +66,10 @@ export async function streamChat(o: StreamOptions): Promise<void> {
       o.onUsage(JSON.parse(e.data) as ChatUsageEvent)
       return
     }
-    if (e.data === '[DONE]') return
+    if (e.data === '[DONE]') {
+      sawDone = true
+      return
+    }
     let payload: unknown
     try {
       payload = JSON.parse(e.data)
@@ -73,8 +78,10 @@ export async function streamChat(o: StreamOptions): Promise<void> {
     }
     if (!isObj(payload)) return
     if (!citationsSent && isObj(payload.venice_parameters) && Array.isArray(payload.venice_parameters.web_search_citations)) {
-      const list = payload.venice_parameters.web_search_citations.flatMap(c =>
-        isObj(c) && typeof c.title === 'string' && typeof c.url === 'string' ? [{ title: c.title, url: c.url }] : [])
+      const list = payload.venice_parameters.web_search_citations.flatMap((c) => {
+        const url = isObj(c) ? safeHttpUrl(c.url) : null
+        return isObj(c) && typeof c.title === 'string' && url ? [{ title: c.title, url }] : []
+      })
       if (list.length) {
         o.onCitations(list)
         citationsSent = true
@@ -106,4 +113,7 @@ export async function streamChat(o: StreamOptions): Promise<void> {
   parser.end()
   const tail = splitter.end()
   emit(tail.text, tail.reasoning)
+  // The server sends [DONE] only after a complete answer is settled; a stream
+  // that ends without it was cut short (time limit, provider dropped it).
+  if (!sawDone) throw new ChatApiError(0, 'stream_incomplete', 'The answer was cut off before it finished.')
 }

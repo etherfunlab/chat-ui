@@ -23,7 +23,7 @@ const globalPrompt = ref('')
 
 const session = computed(() => sessions.value.find(s => s.id === activeId.value) ?? draft.value)
 const model = computed(() => byId(session.value?.model) ?? models.value[0])
-const { messages, sending, send, stop } = useChat(activeId)
+const { messages, sending, busy, send, stop } = useChat(activeId)
 
 async function refreshSessions(): Promise<void> {
   sessions.value = await store.listSessions(props.wallet)
@@ -51,6 +51,7 @@ function selectSession(id: string): void {
 }
 
 async function deleteSession(id: string): Promise<void> {
+  stop(id) // an answer still streaming into it must not bring it back
   await store.deleteSession(id)
   if (activeId.value === id) startNewChat()
   await refreshSessions()
@@ -123,13 +124,16 @@ onMounted(async () => {
       />
       <MessageList v-if="messages.length" :messages="messages" />
       <div v-else class="grid place-items-center px-6 text-center text-[0.95rem] text-ink-muted">
-        <p v-if="modelsError" role="alert" class="text-danger-ink">{{ t('chat.modelsUnavailable') }}</p>
+        <div v-if="modelsError" role="alert" class="grid justify-items-center gap-2 text-danger-ink">
+          <p>{{ t('chat.modelsUnavailable') }}</p>
+          <button type="button" class="chip" @click="loadModels">{{ t('chat.retry') }}</button>
+        </div>
         <p v-else-if="model">{{ t('chat.empty', { model: model.name }) }}</p>
       </div>
       <Composer
         v-if="session"
-        :model="model" :thinking="session.thinking" :web-search="session.webSearch" :sending="sending"
-        @send="onSend" @stop="stop"
+        :model="model" :thinking="session.thinking" :web-search="session.webSearch" :sending="sending" :locked="busy && !sending"
+        @send="onSend" @stop="stop()"
         @update:thinking="(v: ThinkingPref) => updateSession({ thinking: v })"
         @update:web-search="(v: boolean) => updateSession({ webSearch: v })"
       />

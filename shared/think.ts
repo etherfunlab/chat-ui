@@ -10,16 +10,17 @@ function partialTagLength(s: string, tag: string): number {
 }
 
 /**
- * Separates `<think>…</think>` spans (models that write their reasoning into
- * the content stream) from the answer text. Tags may be split across any two
- * deltas; only a possible partial tag is held back, everything else is
- * emitted immediately so streaming stays live.
+ * Separates a leading `<think>…</think>` block (models that write their
+ * reasoning into the content stream) from the answer. Only a block at the very
+ * start counts — after leading whitespace at most — so an answer that merely
+ * mentions the tag stays text. Tags may be split across any two deltas; only a
+ * possible partial tag is held back, so streaming stays live.
  */
 export function createThinkSplitter(): {
   push(content: string): { text: string, reasoning: string }
   end(): { text: string, reasoning: string }
 } {
-  let inThink = false
+  let state: 'start' | 'think' | 'text' = 'start'
   let pending = ''
 
   return {
@@ -29,19 +30,35 @@ export function createThinkSplitter(): {
       let text = ''
       let reasoning = ''
       for (;;) {
-        const tag = inThink ? CLOSE : OPEN
-        const idx = buf.indexOf(tag)
-        if (idx !== -1) {
-          if (inThink) reasoning += buf.slice(0, idx)
-          else text += buf.slice(0, idx)
-          buf = buf.slice(idx + tag.length)
-          inThink = !inThink
+        if (state === 'text') {
+          text += buf
+          break
+        }
+        if (state === 'start') {
+          const lead = buf.length - buf.trimStart().length
+          const rest = buf.slice(lead)
+          if (rest.startsWith(OPEN)) {
+            text += buf.slice(0, lead)
+            buf = rest.slice(OPEN.length)
+            state = 'think'
+            continue
+          }
+          if (OPEN.startsWith(rest)) {
+            pending = buf // whitespace and maybe the start of the tag
+            break
+          }
+          state = 'text'
           continue
         }
-        const hold = partialTagLength(buf, tag)
-        const out = buf.slice(0, buf.length - hold)
-        if (inThink) reasoning += out
-        else text += out
+        const idx = buf.indexOf(CLOSE)
+        if (idx !== -1) {
+          reasoning += buf.slice(0, idx)
+          buf = buf.slice(idx + CLOSE.length)
+          state = 'text'
+          continue
+        }
+        const hold = partialTagLength(buf, CLOSE)
+        reasoning += buf.slice(0, buf.length - hold)
         pending = buf.slice(buf.length - hold)
         break
       }
@@ -50,7 +67,7 @@ export function createThinkSplitter(): {
     end() {
       const rest = pending
       pending = ''
-      return inThink ? { text: '', reasoning: rest } : { text: rest, reasoning: '' }
+      return state === 'think' ? { text: '', reasoning: rest } : { text: rest, reasoning: '' }
     },
   }
 }

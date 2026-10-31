@@ -115,6 +115,36 @@ describe('export / import', () => {
     expect(copied[0]!.id).not.toBe('m')
   })
 
+  it('never overwrites existing messages, even when a new session reuses their ids', async () => {
+    await store.putSession(session({ id: 'mine' }))
+    await store.putMessage(message('mine', { id: 'shared-id', text: 'original' }))
+    const file = { format: 'chat-ui-export', version: 1, exportedAt: 'x', sessions: [{
+      ...session({ id: 'theirs' }), messages: [message('theirs', { id: 'shared-id', text: 'hostile' })],
+    }] }
+    await store.importSessions('W', file)
+    expect((await store.listMessages('mine'))[0]).toMatchObject({ id: 'shared-id', text: 'original' })
+    expect((await store.listMessages('theirs')).map(m => m.text)).toEqual(['hostile'])
+  })
+
+  it('sanitizes imported fields: remote images, unsafe citations, broken shapes', async () => {
+    const file = { format: 'chat-ui-export', version: 1, exportedAt: 'x', sessions: [{
+      ...session({ id: 'imp' }), thinking: 'garbage', webSearch: 'yes',
+      messages: [
+        message('imp', { id: 'a', images: ['https://evil.example/p.png', 'data:image/png;base64,AA', 'data:text/html,x'] as never }),
+        { ...message('imp', { id: 'b', role: 'assistant' }), citations: [{ title: 't', url: 'javascript:alert(1)' }, { title: 'ok', url: 'https://ok.example' }, 'junk'], usage: { costMicro: 'x' }, status: 'weird' },
+      ],
+    }] }
+    await store.importSessions('W', file)
+    const s = (await store.getSession('imp'))!
+    expect(s.thinking).toEqual({ enabled: true, effort: null })
+    expect(s.webSearch).toBe(false)
+    const [a, b] = await store.listMessages('imp')
+    expect(a!.images).toEqual(['data:image/png;base64,AA'])
+    expect(b!.citations).toEqual([{ title: 'ok', url: 'https://ok.example' }])
+    expect(b!.usage).toBeNull()
+    expect(b!.status).toBe('done')
+  })
+
   it('rejects a file of another format or version', async () => {
     await expect(store.importSessions('W', { format: 'something-else', version: 1, sessions: [] })).rejects.toThrow()
     await expect(store.importSessions('W', { format: 'chat-ui-export', version: 2, sessions: [] })).rejects.toThrow()

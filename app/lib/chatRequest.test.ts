@@ -107,6 +107,11 @@ describe('buildChatRequest', () => {
     expect(omittedImageMessageIds).toEqual(['p'])
   })
 
+  it('omits the empty text part of an image-only message', () => {
+    const { body } = build([msg({ text: '', images: ['data:x;base64,AA'] })])
+    expect(body.messages[0]!.content).toEqual([{ type: 'image_url', image_url: { url: 'data:x;base64,AA' } }])
+  })
+
   it('throws when text alone exceeds the limit', () => {
     expect(() => build([msg({ text: 'x'.repeat(BODY_LIMIT_BYTES) })])).toThrow(BodyTooLargeError)
   })

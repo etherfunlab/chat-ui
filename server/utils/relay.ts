@@ -189,10 +189,15 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
     return { usage, costMicro: String(cost) }
   })()
 
+  // A streamed answer stops when the client leaves (the reader saves the rest).
+  // A non-streamed one does not: nothing reaches the client until it is
+  // complete, so stopping early would only let a disconnect dodge the charge.
   const ac = new AbortController()
   const onClientAbort = () => ac.abort()
-  if (req.signal.aborted) ac.abort()
-  else req.signal.addEventListener('abort', onClientAbort, { once: true })
+  if (prepared.stream) {
+    if (req.signal.aborted) ac.abort()
+    else req.signal.addEventListener('abort', onClientAbort, { once: true })
+  }
   const timer = setTimeout(() => ac.abort(), deps.maxMs ?? RELAY_MAX_MS)
   const cleanup = () => {
     clearTimeout(timer)

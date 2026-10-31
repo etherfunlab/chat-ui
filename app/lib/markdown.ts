@@ -1,10 +1,14 @@
 import MarkdownIt from 'markdown-it'
 import type Token from 'markdown-it/lib/token.mjs'
 import type { Citation } from '#shared/chat'
+import { safeHttpUrl } from '#shared/url'
 
 // html: false — model output is untrusted; raw HTML renders as text.
-// markdown-it's link validation already refuses javascript:/vbscript:/data: URLs.
-const md = new MarkdownIt({ html: false, linkify: true, breaks: false })
+// markdown-it's link validation refuses javascript:/vbscript:/data: in markdown
+// links; citation chips are built by hand below and checked with safeHttpUrl.
+// Images are disabled: a remote image loads without a click, so a prompt
+// injection could exfiltrate the conversation through its URL.
+const md = new MarkdownIt({ html: false, linkify: true, breaks: false }).disable('image')
 const esc = md.utils.escapeHtml
 
 const renderToken = md.renderer.renderToken.bind(md.renderer)
@@ -47,7 +51,7 @@ md.core.ruler.push('citations', (state) => {
       const pieces: Token[] = []
       for (const m of tok.content.matchAll(MARKER)) {
         const nums = m[1]!.split(',').map(s => Number(s.trim()))
-        if (nums.some(n => n < 1 || n > citations.length)) continue
+        if (nums.some(n => n < 1 || n > citations.length || !safeHttpUrl(citations[n - 1]!.url))) continue
         if (m.index! > last) {
           const text = new state.Token('text', '', 0)
           text.content = tok.content.slice(last, m.index)

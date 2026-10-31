@@ -60,6 +60,13 @@ describe('citationsFromChat', () => {
     })).toEqual([{ title: 'Solana fees', url: 'https://solana.com/docs/core/fees' }])
   })
 
+  it('drops citations whose url is not http(s)', () => {
+    expect(citationsFromChat({ venice_parameters: { web_search_citations: [
+      { title: 'evil', url: 'javascript:alert(1)' },
+      { title: 'ok', url: 'https://ok.example' },
+    ] } })).toEqual([{ title: 'ok', url: 'https://ok.example' }])
+  })
+
   it('returns an empty list when absent', () => {
     expect(citationsFromChat({})).toEqual([])
   })

@@ -64,7 +64,8 @@ export function buildChatRequest(i: BuildInput): {
         : {
             role: 'user',
             content: [
-              { type: 'text', text } satisfies ChatTextPart,
+              // An empty text part is rejected by some providers: images only, then.
+              ...(text ? [{ type: 'text', text } satisfies ChatTextPart] : []),
               ...send.map(a => ({ type: 'image_url', image_url: { url: a.url } }) satisfies ChatImagePart),
             ],
           })

@@ -5,7 +5,15 @@ import { downscaleImage } from '~/lib/images'
 import type { ThinkingPref } from '~/lib/store'
 import ThinkingMenu from './ThinkingMenu.vue'
 
-const props = defineProps<{ model: ModelEntry | undefined, thinking: ThinkingPref, webSearch: boolean, sending: boolean }>()
+const props = defineProps<{
+  model: ModelEntry | undefined
+  thinking: ThinkingPref
+  webSearch: boolean
+  /** An answer is streaming in this chat. */
+  sending: boolean
+  /** An answer is streaming in another chat; one at a time. */
+  locked?: boolean
+}>()
 const emit = defineEmits<{
   'send': [{ text: string, images: string[] }]
   'stop': []
@@ -20,7 +28,8 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const imageError = ref('')
 
 const canAttach = computed(() => !!props.model?.vision && images.value.length < (props.model?.maxImages ?? 0))
-const canSend = computed(() => !props.sending && (text.value.trim() !== '' || images.value.length > 0))
+const canSend = computed(() => !!props.model && !props.sending && !props.locked
+  && (text.value.trim() !== '' || images.value.length > 0))
 
 function submit(): void {
   if (!canSend.value) return

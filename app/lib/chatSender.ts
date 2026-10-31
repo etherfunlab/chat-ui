@@ -116,8 +116,14 @@ export function createChatSender(deps: SenderDeps) {
     }
 
     if (answer.reasoning) answer.reasoningMs = (reasoningEnded ?? deps.now()) - started
+    const latest = await store.getSession(i.session.id)
+    if (!latest) {
+      // Deleted while streaming: drop anything a flush wrote after the delete.
+      await store.deleteSession(i.session.id)
+      i.onUpdate({ ...answer })
+      return answer
+    }
     await store.putMessage({ ...answer })
-    const latest = (await store.getSession(i.session.id)) ?? current
     await store.putSession({ ...latest, updatedAt: deps.now() })
     i.onUpdate({ ...answer })
     await deps.refreshMe().catch(() => {})

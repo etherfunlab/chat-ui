@@ -91,6 +91,17 @@ describe('createChatSender', () => {
     expect(answer.error).toMatch(/too long/)
   })
 
+  it('does not resurrect a session deleted mid-stream', async () => {
+    const { s } = sender(async (o) => {
+      o.onDelta({ text: 'partial', reasoning: '' })
+      await store.deleteSession('s')
+      o.onDelta({ text: ' more', reasoning: '' })
+    })
+    await s.send({ session: session(), model: OPUS, text: 'x', images: [], systemPrompt: null, signal: new AbortController().signal, onUpdate() {} })
+    expect(await store.getSession('s')).toBeUndefined()
+    expect(await store.listMessages('s')).toEqual([])
+  })
+
   it('records how many images a message could not send', async () => {
     const textOnly: ModelEntry = { ...OPUS, vision: false, maxImages: 0 }
     const { s } = sender(async () => {})

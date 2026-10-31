@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { downloadJson } from '~/lib/download'
 import type { StoredSession } from '~/lib/store'
 import type { ThemePref } from '~/composables/useTheme'
 
@@ -30,18 +31,9 @@ function save(): void {
   notice.value = t('settings.saved')
 }
 
-function download(name: string, data: unknown): void {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
 async function exportChats(onlyCurrent: boolean): Promise<void> {
   const file = await store.exportSessions(props.wallet, onlyCurrent && props.session ? [props.session.id] : undefined)
-  download(`chat-ui-${new Date().toISOString().slice(0, 10)}.json`, file)
+  downloadJson(`chat-ui-${new Date().toISOString().slice(0, 10)}.json`, file)
 }
 
 async function importChats(e: Event): Promise<void> {

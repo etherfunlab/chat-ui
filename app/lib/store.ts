@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie'
 import type { ChatUsageEvent, Citation } from '#shared/chat'
+import { safeHttpUrl } from '#shared/url'
 
 export interface ThinkingPref {
   enabled: boolean
@@ -81,14 +82,75 @@ class ChatDb extends Dexie {
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-function looksLikeSession(v: unknown): v is StoredSession & { messages: StoredMessage[] } {
-  return isObj(v) && typeof v.id === 'string' && typeof v.title === 'string' && typeof v.model === 'string'
-    && typeof v.createdAt === 'number' && typeof v.updatedAt === 'number' && Array.isArray(v.messages)
+const STATUSES = new Set(['done', 'aborted', 'error'])
+const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallback)
+const strOrNull = (v: unknown) => (typeof v === 'string' ? v : null)
+const nonNegative = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
+
+/** An imported file is untrusted: rebuild each record field by field. */
+function sanitizeSession(v: unknown): (Omit<StoredSession, 'wallet'> & { messages: unknown[] }) | null {
+  if (!isObj(v) || typeof v.id !== 'string' || typeof v.model !== 'string' || !Array.isArray(v.messages)) return null
+  const th = isObj(v.thinking) ? v.thinking : null
+  return {
+    id: v.id,
+    title: str(v.title, ''),
+    model: v.model,
+    systemPrompt: strOrNull(v.systemPrompt),
+    thinking: th && typeof th.enabled === 'boolean'
+      ? { enabled: th.enabled, effort: strOrNull(th.effort) }
+      : { enabled: true, effort: null },
+    webSearch: v.webSearch === true,
+    createdAt: nonNegative(v.createdAt),
+    updatedAt: nonNegative(v.updatedAt),
+    messages: v.messages,
+  }
 }
 
-function looksLikeMessage(v: unknown): v is StoredMessage {
-  return isObj(v) && typeof v.id === 'string' && (v.role === 'user' || v.role === 'assistant')
-    && typeof v.text === 'string' && typeof v.createdAt === 'number'
+function sanitizeUsage(v: unknown): ChatUsageEvent | null {
+  if (!isObj(v) || !isObj(v.usage) || typeof v.costMicro !== 'string' || !/^\d+$/.test(v.costMicro)) return null
+  const u = v.usage
+  return {
+    costMicro: v.costMicro,
+    usage: {
+      inputTokens: nonNegative(u.inputTokens),
+      cachedInputTokens: nonNegative(u.cachedInputTokens),
+      cacheWriteTokens: nonNegative(u.cacheWriteTokens),
+      outputTokens: nonNegative(u.outputTokens),
+      reasoningTokens: nonNegative(u.reasoningTokens),
+      webSearch: u.webSearch === true,
+    },
+  }
+}
+
+function sanitizeMessage(v: unknown, sessionModel: string): Omit<StoredMessage, 'sessionId'> | null {
+  if (!isObj(v) || typeof v.id !== 'string' || (v.role !== 'user' && v.role !== 'assistant') || typeof v.text !== 'string') {
+    return null
+  }
+  const images = Array.isArray(v.images)
+    // Only embedded images: a remote URL would be fetched (and forwarded upstream) on its own.
+    ? v.images.filter((i): i is string => typeof i === 'string' && i.startsWith('data:image/'))
+    : []
+  const citations = Array.isArray(v.citations)
+    ? v.citations.flatMap((c) => {
+        const url = isObj(c) ? safeHttpUrl(c.url) : null
+        return isObj(c) && typeof c.title === 'string' && url ? [{ title: c.title, url }] : []
+      })
+    : []
+  return {
+    id: v.id,
+    role: v.role,
+    text: v.text,
+    images,
+    reasoning: str(v.reasoning, ''),
+    reasoningMs: typeof v.reasoningMs === 'number' && v.reasoningMs >= 0 ? v.reasoningMs : null,
+    citations,
+    usage: sanitizeUsage(v.usage),
+    status: typeof v.status === 'string' && STATUSES.has(v.status) ? v.status as StoredMessage['status'] : 'done',
+    error: strOrNull(v.error),
+    omittedImages: nonNegative(v.omittedImages),
+    model: str(v.model, sessionModel),
+    createdAt: nonNegative(v.createdAt),
+  }
 }
 
 /**
@@ -142,14 +204,18 @@ export function createStore(dbName = 'chat-ui'): ChatStore {
       let copied = 0
       await db.transaction('rw', db.sessions, db.messages, async () => {
         for (const raw of file.sessions as unknown[]) {
-          if (!looksLikeSession(raw)) continue
-          const { messages, ...rest } = raw
+          const s = sanitizeSession(raw)
+          if (!s) continue
+          const { messages, ...rest } = s
           const exists = (await db.sessions.get(rest.id)) !== undefined
           const sessionId = exists ? crypto.randomUUID() : rest.id
           await db.sessions.put({ ...rest, id: sessionId, wallet, title: exists ? `${rest.title} (copy)` : rest.title })
-          for (const m of messages) {
-            if (!looksLikeMessage(m)) continue
-            await db.messages.put({ ...m, id: exists ? crypto.randomUUID() : m.id, sessionId })
+          for (const rawMessage of messages) {
+            const m = sanitizeMessage(rawMessage, rest.model)
+            if (!m) continue
+            // Never overwrite: an id already taken (in any chat) gets a fresh one.
+            const taken = (await db.messages.get(m.id)) !== undefined
+            await db.messages.put({ ...m, id: taken ? crypto.randomUUID() : m.id, sessionId })
           }
           if (exists) copied++
           else imported++

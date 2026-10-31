@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatCost } from '#shared/money'
+import { safeHttpUrl } from '#shared/url'
 import { renderMarkdown } from '~/lib/markdown'
 import type { StoredMessage } from '~/lib/store'
 import ThinkingBlock from './ThinkingBlock.vue'
@@ -9,6 +10,9 @@ const props = defineProps<{ message: StoredMessage }>()
 const { t } = useI18n()
 
 const html = computed(() => renderMarkdown(props.message.text, props.message.citations, { copy: t('chat.copy') }))
+const sources = computed(() => props.message.citations
+  .map((c, i) => ({ n: i + 1, title: c.title, url: safeHttpUrl(c.url) }))
+  .filter((c): c is { n: number, title: string, url: string } => c.url !== null))
 const thinkingLive = computed(() => props.message.status === 'streaming' && !props.message.text)
 const waiting = computed(() => props.message.status === 'streaming' && !props.message.text && !props.message.reasoning)
 const meta = computed(() => {
@@ -60,13 +64,13 @@ async function onClick(e: MouseEvent): Promise<void> {
     />
     <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapes all raw HTML -->
     <div v-if="message.text" class="md min-w-0 font-native text-[16px] leading-[1.45] text-ink" @click="onClick" v-html="html" />
-    <div v-if="message.citations.length" class="flex flex-wrap gap-1.5">
+    <div v-if="sources.length" class="flex flex-wrap gap-1.5">
       <a
-        v-for="(c, i) in message.citations" :key="c.url" :href="c.url" :title="c.title"
+        v-for="c in sources" :key="c.n" :href="c.url" :title="c.title"
         target="_blank" rel="noopener noreferrer"
         class="inline-flex items-center gap-1.5 rounded-full border border-line py-1 pl-1.5 pr-2.5 text-[0.74rem] font-semibold text-ink"
       >
-        <span class="grid size-4 place-items-center rounded-full bg-tint text-[0.62rem] text-tint-ink">{{ i + 1 }}</span>
+        <span class="grid size-4 place-items-center rounded-full bg-tint text-[0.62rem] text-tint-ink">{{ c.n }}</span>
         {{ host(c.url) }}
       </a>
     </div>

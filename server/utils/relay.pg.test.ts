@@ -307,6 +307,17 @@ describe('relayChat — upstream failures', () => {
 })
 
 describe('relayChat — non-streaming', () => {
+  it('charges a non-stream request in full even when the client disconnects', async () => {
+    const json = { choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 5 }, cost: { usd: 0.0002, diem: 0 } }
+    const { upstream, calls } = scripted([], { json })
+    const client = new AbortController()
+    client.abort()
+    await relayChat(deps(upstream), req(body({ stream: false }), { signal: client.signal }))
+    expect(calls[0]!.signal.aborted).toBe(false)
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+    expect(await account()).toEqual({ balance: 1_000_000 - 220, held: 0 })
+  })
+
   it('returns the upstream JSON and settles from it', async () => {
     const json = {
       choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],

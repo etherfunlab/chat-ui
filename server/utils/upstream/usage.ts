@@ -1,5 +1,6 @@
 import type { Usage } from '#shared/billing'
 import type { Citation } from '#shared/chat'
+import { safeHttpUrl } from '#shared/url'
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null
@@ -48,7 +49,8 @@ export function citationsFromChat(payload: unknown): Citation[] {
   if (!isObj(payload) || !isObj(payload.venice_parameters)) return []
   const list = payload.venice_parameters.web_search_citations
   if (!Array.isArray(list)) return []
-  return list.flatMap(c => (isObj(c) && typeof c.title === 'string' && typeof c.url === 'string'
-    ? [{ title: c.title, url: c.url }]
-    : []))
+  return list.flatMap((c) => {
+    const url = isObj(c) ? safeHttpUrl(c.url) : null
+    return isObj(c) && typeof c.title === 'string' && url ? [{ title: c.title, url }] : []
+  })
 }

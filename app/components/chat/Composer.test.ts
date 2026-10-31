@@ -46,6 +46,16 @@ describe('Composer', () => {
     expect(w.emitted('send')).toBeUndefined()
   })
 
+  it('neither sends nor clears the input when no model is available', async () => {
+    const w = mountComposer({ model: undefined })
+    const ta = w.get('textarea')
+    await ta.setValue('keep me')
+    await ta.trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('send')).toBeUndefined()
+    expect((ta.element as HTMLTextAreaElement).value).toBe('keep me')
+    expect(w.get('button[data-role="send"]').attributes('disabled')).toBeDefined()
+  })
+
   it('shows Stop while sending and emits stop', async () => {
     const w = mountComposer({ sending: true })
     const button = w.get('button[data-role="send"]')
