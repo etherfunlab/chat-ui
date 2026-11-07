@@ -109,6 +109,8 @@ const themes: { value: ThemePref, label: string }[] = [
           </div>
         </div>
 
+        <SettingsApiKeysPanel />
+
         <BillingTopUpPanel />
 
         <div class="grid gap-2">
