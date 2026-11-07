@@ -8,9 +8,10 @@ import {
   affordableOutputTokens, applyMarkup, computeHold, costMicro, estimateInputTokens, estimateTokens,
 } from './pricing'
 import type { Queryable } from './queryable'
+import { chatProtocol } from './upstream/chatProtocol'
 import { errorResponse, RelayError } from './upstream/errors'
-import { prepareChat, type PreparedChat } from './upstream/prepareChat'
-import { citationsFromChat, reportedCostMicro, usageFromChat } from './upstream/usage'
+import type { Prepared, Protocol, StreamEnd } from './upstream/protocol'
+import { responsesProtocol } from './upstream/responsesProtocol'
 
 /** Above this the platform rejects the request anyway; refuse it ourselves first. */
 export const MAX_BODY_BYTES = 4_500_000
@@ -38,6 +39,20 @@ export interface RelayRequest {
   signal: AbortSignal
   /** Web client only: append a `chatui-usage` event with the charge before [DONE]. */
   emitUsageEvent: boolean
+  /**
+   * What a client disconnect does to a streamed answer. 'abort' stops the
+   * upstream and charges what was received (the web client's Stop button);
+   * 'drain' keeps reading to the end, forwards nothing more, and charges the
+   * real usage (/v1: a script that hangs up must not dodge the bill).
+   */
+  disconnect: 'abort' | 'drain'
+  /**
+   * Receives, as soon as a charge is open, a promise that resolves once it
+   * is settled. On a platform that terminates a function when the client
+   * disconnects, this is what keeps the settlement (and, in drain mode, the
+   * upstream read) alive.
+   */
+  keepAlive?: (work: Promise<unknown>) => void
 }
 
 type SettleStatus = 'ok' | 'aborted' | 'error'
@@ -50,40 +65,32 @@ const SSE_HEADERS = {
   'x-accel-buffering': 'no',
 }
 
-/** Text the model produced in a payload, kept in memory only to estimate output tokens. */
-function outputText(payload: unknown): string {
-  if (!isObj(payload) || !Array.isArray(payload.choices)) return ''
-  let s = ''
-  for (const c of payload.choices) {
-    if (!isObj(c)) continue
-    const part = isObj(c.delta) ? c.delta : isObj(c.message) ? c.message : null
-    if (!part) continue
-    if (typeof part.content === 'string') s += part.content
-    if (typeof part.reasoning_content === 'string') s += part.reasoning_content
-    if (Array.isArray(part.tool_calls)) {
-      for (const t of part.tool_calls) {
-        if (isObj(t) && isObj(t.function) && typeof t.function.arguments === 'string') s += t.function.arguments
-      }
-    }
-  }
-  return s
-}
-
-function hasFinishReason(payload: unknown): boolean {
-  return isObj(payload) && Array.isArray(payload.choices)
-    && payload.choices.some(c => isObj(c) && typeof c.finish_reason === 'string' && c.finish_reason !== '')
-}
-
 /** A forwarded event must end with a blank line, or the next one merges into it. */
 function terminated(raw: string): string {
   return /(\r\n\r\n|\n\n|\r\r)$/.test(raw) ? raw : `${raw.replace(/[\r\n]*$/, '')}\n\n`
 }
 
-const SETTLE_BACKOFF_MS = [0, 100, 400]
-
-function isUsageOnly(payload: unknown): boolean {
-  return isObj(payload) && isObj(payload.usage) && (!Array.isArray(payload.choices) || payload.choices.length === 0)
+/**
+ * The upstream's own charge never reaches a client: what they owe is this
+ * deployment's figure, not the provider's. Looks at the payload and at a
+ * nested response object (Responses stream events). Returns null when
+ * nothing changed.
+ */
+function withoutCost(payload: unknown): Obj | null {
+  if (!isObj(payload)) return null
+  let out: Obj | null = null
+  if ('cost' in payload) {
+    const { cost: _cost, ...rest } = payload
+    out = rest
+  }
+  if (isObj(payload.response) && 'cost' in payload.response) {
+    const { cost: _cost, ...response } = payload.response
+    out = { ...(out ?? payload), response }
+  }
+  return out
 }
+
+const SETTLE_BACKOFF_MS = [0, 100, 400]
 
 function upstreamErrorResponse(status: number, text: string, upstreamKey: string): Response {
   if (status === 401 || status === 403) return errorResponse(502, 'upstream_auth', 'The model provider rejected this deployment\'s credentials')
@@ -102,12 +109,12 @@ function upstreamErrorResponse(status: number, text: string, upstreamKey: string
 }
 
 /**
- * Meters one chat-completions request: authenticate and hold in one ledger
- * round trip, forward with an explicit output cap, stream through while
- * collecting usage / cost / citations on the side, and settle exactly once on
- * every path — completion, client abort, upstream failure, or time limit.
+ * Meters one request: authenticate and hold in one ledger round trip,
+ * forward with an explicit output cap, stream through while collecting
+ * usage / cost / citations on the side, and settle exactly once on every
+ * path — completion, client abort, upstream failure, or time limit.
  */
-export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Response> {
+export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayRequest): Promise<Response> {
   const { config, db } = deps
   if (Buffer.byteLength(req.rawBody, 'utf8') > MAX_BODY_BYTES) {
     return errorResponse(413, 'request_too_large', 'Request body exceeds 4.5 MB; send fewer or smaller images')
@@ -125,9 +132,9 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
   } catch {
     return errorResponse(503, 'catalog_unavailable', 'The model list is unavailable; try again shortly')
   }
-  let prepared: PreparedChat
+  let prepared: Prepared
   try {
-    prepared = prepareChat(body, models)
+    prepared = protocol.prepare(body, models)
   } catch (e) {
     if (e instanceof RelayError) return errorResponse(e.status, e.code, e.message)
     throw e
@@ -153,7 +160,7 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
       allowed: billing ? null : [...config.allowedWallets],
       wantMicro,
       minMicro,
-      endpoint: 'chat',
+      endpoint: protocol.endpoint,
       model: prepared.model.id,
     })
   } catch {
@@ -166,24 +173,42 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
   }
   const wallet = opened.wallet
 
-  prepared.upstreamBody.max_completion_tokens = billing
+  protocol.setMaxOutput(prepared.upstreamBody, billing
     ? Math.max(1, Math.min(prepared.requestedMaxOut, affordableOutputTokens({
         holdMicro: opened.holdMicro, pricing, inputTokens, webSearch: holdSearch,
         markupBps: config.markupBps, searchFeeMicro: config.searchFeeMicro,
       })))
-    : prepared.requestedMaxOut
+    : prepared.requestedMaxOut)
 
   // Everything the upstream tells us, gathered on the side.
   const seen = { usage: null as Usage | null, reported: null as number | null, citations: [] as Citation[], output: '' }
   const collect = (payload: unknown) => {
-    seen.usage = usageFromChat(payload) ?? seen.usage
-    seen.reported = reportedCostMicro(payload) ?? seen.reported
-    if (seen.citations.length === 0) seen.citations = citationsFromChat(payload)
-    seen.output += outputText(payload)
+    seen.usage = protocol.usage(payload) ?? seen.usage
+    seen.reported = protocol.reportedCost(payload) ?? seen.reported
+    if (seen.citations.length === 0) seen.citations = protocol.citations(payload)
+    seen.output += protocol.outputText(payload)
+  }
+
+  // From here on a charge is open; whoever hosts us must let the settlement
+  // finish even if the client is gone.
+  let resolveSettled!: () => void
+  const settledPromise = new Promise<void>((r) => { resolveSettled = r })
+  try {
+    req.keepAlive?.(settledPromise)
+  } catch (err) {
+    // The host could not promise to keep us alive; the charge is open, so carry on and settle as usual.
+    console.error(`[relay] keepAlive failed for charge ${id}: ${(err as Error).message}`)
   }
 
   let settling: Promise<{ event: ChatUsageEvent, settled: boolean }> | null = null
   const finish = (status: SettleStatus, charge: boolean) => settling ??= (async () => {
+    try {
+      return await settle(status, charge)
+    } finally {
+      resolveSettled()
+    }
+  })()
+  const settle = async (status: SettleStatus, charge: boolean) => {
     const webSearch = prepared.webSearch === 'on' || (prepared.webSearch === 'auto' && seen.citations.length > 0)
     const usage: Usage = charge
       ? { ...(seen.usage ?? { ...ZERO_USAGE, inputTokens, outputTokens: estimateTokens(seen.output) }), webSearch }
@@ -209,14 +234,16 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
       }
     }
     return { event: { usage, costMicro: String(cost) }, settled: false }
-  })()
+  }
 
-  // A streamed answer stops when the client leaves (the reader saves the rest).
-  // A non-streamed one does not: nothing reaches the client until it is
-  // complete, so stopping early would only let a disconnect dodge the charge.
+  // A streamed answer stops when the client leaves only in abort mode (the
+  // reader saves the rest). A non-streamed one never does: nothing reaches
+  // the client until it is complete, so stopping early would only let a
+  // disconnect dodge the charge.
   const ac = new AbortController()
+  const followClient = prepared.stream && req.disconnect === 'abort'
   const onClientAbort = () => ac.abort()
-  if (prepared.stream) {
+  if (followClient) {
     if (req.signal.aborted) ac.abort()
     else req.signal.addEventListener('abort', onClientAbort, { once: true })
   }
@@ -228,7 +255,7 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
 
   let res: Response
   try {
-    res = await deps.upstream('/chat/completions', prepared.upstreamBody, ac.signal)
+    res = await deps.upstream(protocol.upstreamPath, prepared.upstreamBody, ac.signal)
   } catch {
     cleanup()
     // No response means nothing was produced: release the hold, charge nothing.
@@ -252,8 +279,8 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
       const json: unknown = await res.json()
       collect(json)
       cleanup()
-      await finish('ok', true)
-      return new Response(JSON.stringify(json), { status: 200, headers: { 'content-type': 'application/json' } })
+      await finish(protocol.end(json) === 'failed' ? 'error' : 'ok', true)
+      return new Response(JSON.stringify(withoutCost(json) ?? json), { status: 200, headers: { 'content-type': 'application/json' } })
     } catch {
       cleanup()
       await finish(ac.signal.aborted ? 'aborted' : 'error', ac.signal.aborted)
@@ -264,78 +291,86 @@ export async function relayChat(deps: RelayDeps, req: RelayRequest): Promise<Res
   const upstreamBody = res.body
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (s: string) => {
-        try {
-          controller.enqueue(encoder.encode(s))
-        } catch {
-          // client already gone
-        }
-      }
-      let upstreamDone = false
-      let finished = false
-      const parser = createSseParser((e) => {
-        if (upstreamDone) return // nothing counts after the upstream's [DONE]
-        if (e.data === '[DONE]') {
-          upstreamDone = true // re-sent after settlement
-          return
-        }
-        let payload: unknown
-        try {
-          payload = JSON.parse(e.data)
-        } catch {
-          send(terminated(e.raw))
-          return
-        }
-        collect(payload)
-        if (hasFinishReason(payload)) finished = true
-        if (isUsageOnly(payload) && !prepared.clientWantsUsage) return
-        send(terminated(e.raw))
-      }, (raw) => {
-        if (!upstreamDone) send(terminated(raw)) // keepalives keep proxies and clients waiting
-      })
-
-      let status: SettleStatus
-      let charge = true
-      if (!upstreamBody) {
-        status = 'error' // a success status with no stream: nothing was produced
-        charge = false
-      } else {
-        try {
-          const reader = upstreamBody.getReader()
-          while (!upstreamDone) {
-            const { done, value } = await reader.read()
-            if (done) break
-            parser.push(decoder.decode(value, { stream: true }))
-          }
-          if (upstreamDone) reader.cancel().catch(() => {})
-          else {
-            parser.push(decoder.decode())
-            parser.end()
-          }
-          // An answer is complete only when the upstream said so; a stream that
-          // simply ends was cut short, and is settled (and reported) as such.
-          status = upstreamDone || finished ? 'ok' : 'aborted'
-        } catch {
-          // Client abort, time limit, or the upstream dropped mid-answer: the
-          // answer was cut short, and what it produced is still charged.
-          status = 'aborted'
-        }
-      }
-      cleanup()
-      const { event, settled } = await finish(status, charge)
-      if (status === 'ok') {
-        if (req.emitUsageEvent && settled) send(`event: chatui-usage\ndata: ${JSON.stringify(event)}\n\n`)
-        send('data: [DONE]\n\n')
-      }
+  const run = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    const send = (s: string) => {
       try {
-        controller.close()
-      } catch {}
-    },
+        controller.enqueue(encoder.encode(s))
+      } catch {
+        // client already gone
+      }
+    }
+    let upstreamDone = false
+    const state: { end: StreamEnd } = { end: 'none' }
+    const parser = createSseParser((e) => {
+      if (upstreamDone) return // nothing counts after the upstream's [DONE]
+      if (e.data === '[DONE]') {
+        upstreamDone = true // re-sent after settlement
+        return
+      }
+      let payload: unknown
+      try {
+        payload = JSON.parse(e.data)
+      } catch {
+        send(terminated(e.raw))
+        return
+      }
+      collect(payload)
+      const end = protocol.end(payload)
+      if (end !== 'none') state.end = end
+      if (protocol.isUsageOnly(payload) && !prepared.clientWantsUsage) return
+      const stripped = withoutCost(payload)
+      send(stripped ? `${e.event !== null ? `event: ${e.event}\n` : ''}data: ${JSON.stringify(stripped)}\n\n` : terminated(e.raw))
+    }, (raw) => {
+      if (!upstreamDone) send(terminated(raw)) // keepalives keep proxies and clients waiting
+    })
+
+    let status: SettleStatus
+    let charge = true
+    if (!upstreamBody) {
+      status = 'error' // a success status with no stream: nothing was produced
+      charge = false
+    } else {
+      try {
+        const reader = upstreamBody.getReader()
+        while (!upstreamDone) {
+          const { done, value } = await reader.read()
+          if (done) break
+          parser.push(decoder.decode(value, { stream: true }))
+        }
+        if (upstreamDone) reader.cancel().catch(() => {})
+        else {
+          parser.push(decoder.decode())
+          parser.end()
+        }
+        // An answer is complete only when the upstream said so; a stream that
+        // simply ends was cut short, and is settled (and reported) as such.
+        status = state.end === 'failed' ? 'error' : upstreamDone || state.end === 'ok' ? 'ok' : 'aborted'
+      } catch {
+        // Client abort, time limit, or the upstream dropped mid-answer: the
+        // answer was cut short, and what it produced is still charged.
+        status = 'aborted'
+      }
+    }
+    cleanup()
+    const { event, settled } = await finish(status, charge)
+    if (status === 'ok') {
+      if (req.emitUsageEvent && settled) send(`event: chatui-usage\ndata: ${JSON.stringify(event)}\n\n`)
+      send('data: [DONE]\n\n')
+    }
+    try {
+      controller.close()
+    } catch {}
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    start: run,
     cancel() {
-      ac.abort()
+      if (followClient) ac.abort()
     },
   })
   return new Response(stream, { status: 200, headers: SSE_HEADERS })
 }
+
+/** OpenAI chat completions through the metered relay. */
+export const relayChat = (deps: RelayDeps, req: RelayRequest): Promise<Response> => relay(deps, chatProtocol, req)
+/** OpenAI Responses API through the metered relay. */
+export const relayResponses = (deps: RelayDeps, req: RelayRequest): Promise<Response> => relay(deps, responsesProtocol, req)

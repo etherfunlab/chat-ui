@@ -73,7 +73,27 @@ const body = (over: Record<string, unknown> = {}) =>
   JSON.stringify({ model: OPUS, stream: true, messages: [{ role: 'user', content: 'hello' }], ...over })
 
 const req = (rawBody: string, over: Record<string, unknown> = {}) =>
-  ({ auth: { wallet: 'W' }, rawBody, signal: new AbortController().signal, emitUsageEvent: true, ...over }) as Parameters<typeof relayChat>[1]
+  ({ auth: { wallet: 'W' }, rawBody, signal: new AbortController().signal, emitUsageEvent: true, disconnect: 'abort', ...over }) as Parameters<typeof relayChat>[1]
+
+/** An upstream that sends `head`, then waits for release() before sending `tail`. */
+function gated(head: string[], tail: string[]) {
+  const calls: Call[] = []
+  let release!: () => void
+  const released = new Promise<void>(r => { release = r })
+  const upstream: RelayDeps['upstream'] = async (path, b, signal) => {
+    calls.push({ path, body: b as Record<string, unknown>, signal })
+    const stream = new ReadableStream<Uint8Array>({
+      async start(c) {
+        for (const ch of head) c.enqueue(enc.encode(ch))
+        await released
+        for (const ch of tail) c.enqueue(enc.encode(ch))
+        c.close()
+      },
+    })
+    return new Response(stream, { status: 200 })
+  }
+  return { upstream, calls, release }
+}
 
 async function account(wallet = 'W') {
   const { rows } = await pglite.query<{ b: string, h: string }>(
@@ -150,7 +170,83 @@ describe('relayChat — streaming', () => {
     expect((await account()).held).toBe(0)
   })
 
-  it('settles an aborted stream from what was received', async () => {
+  it('drains the upstream after a client disconnect and settles on real usage', async () => {
+    const { upstream, calls, release } = gated(
+      [chunk({ content: 'Hel' }), chunk({ content: 'lo' })],
+      [usageChunk({ prompt_tokens: 100, completion_tokens: 20 }, { usd: 0.001, diem: 0 }), DONE],
+    )
+    const client = new AbortController()
+    let work: Promise<unknown> | null = null
+    const res = await relayChat(deps(upstream), req(body(), {
+      signal: client.signal, emitUsageEvent: false, disconnect: 'drain', keepAlive: (w: Promise<unknown>) => { work = w },
+    }))
+    const reader = res.body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    client.abort()
+    expect(calls[0]!.signal.aborted).toBe(false)
+    expect(work).not.toBeNull()
+    release()
+    await work
+    expect(calls[0]!.signal.aborted).toBe(false)
+    expect(await account()).toEqual({ balance: 1_000_000 - 1100, held: 0 })
+    expect(await lastRecord()).toMatchObject({ status: 'ok', output_tokens: 20 })
+  })
+
+  it('registers keepAlive before the upstream answers, resolving only once settled (both modes)', async () => {
+    for (const disconnect of ['drain', 'abort'] as const) {
+      const { upstream, calls, release } = gated([], [chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }), DONE])
+      let work: Promise<unknown> | null = null
+      const pending = relayChat(deps(upstream), req(body(), { disconnect, keepAlive: (w: Promise<unknown>) => { work = w } }))
+      await vi.waitFor(() => expect(calls).toHaveLength(1))
+      expect(work).not.toBeNull() // registered while the upstream has not even sent headers
+      let settled = false
+      void work!.then(() => { settled = true })
+      release()
+      await (await pending).text()
+      await work
+      expect(settled).toBe(true)
+      expect((await lastRecord())!.status).toBe('ok')
+    }
+  })
+
+  it('still settles when keepAlive itself throws', async () => {
+    const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }), DONE])
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await relayChat(deps(upstream), req(body(), { keepAlive: () => { throw new Error('no runtime context') } }))
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+    expect((await account()).held).toBe(0)
+    errors.mockRestore()
+  })
+
+  it('keeps a non-stream request alive until it is settled', async () => {
+    const json = { choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+    const { upstream } = scripted([], { json })
+    let work: Promise<unknown> | null = null
+    await relayChat(deps(upstream), req(body({ stream: false }), { disconnect: 'drain', keepAlive: (w: Promise<unknown>) => { work = w } }))
+    expect(work).not.toBeNull()
+    await work
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+  })
+
+  it('strips cost from forwarded stream payloads but still charges by it', async () => {
+    const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }, { usd: 0.001, diem: 0 }), DONE])
+    const text = await (await relayChat(deps(upstream), req(body({ stream_options: { include_usage: true } })))).text()
+    expect(text).toContain('"prompt_tokens":100')
+    expect(text).not.toContain('"cost"')
+    expect((await account()).balance).toBe(1_000_000 - 1100)
+  })
+
+  it('keeps the event name when re-emitting a stripped payload', async () => {
+    const payload = JSON.stringify({ choices: [{ index: 0, delta: { content: 'x' } }], cost: { usd: 0.001 } })
+    const { upstream } = scripted([`event: foo\ndata: ${payload}\n\n`, DONE])
+    const text = await (await relayChat(deps(upstream), req(body()))).text()
+    expect(text).toContain('event: foo\ndata: {"choices":[{"index":0,"delta":{"content":"x"}}]}\n\n')
+  })
+
+  it('settles an aborted stream from what was received (abort mode stops the upstream)', async () => {
     const { upstream, calls } = scripted([chunk({ content: 'partial answer' })], { hang: true })
     const client = new AbortController()
     const res = await relayChat(deps(upstream), req(body(), { signal: client.signal }))
@@ -385,13 +481,12 @@ describe('relayChat — non-streaming', () => {
     expect(await account()).toEqual({ balance: 1_000_000 - 220, held: 0 })
   })
 
-  it('returns the upstream JSON and settles from it', async () => {
+  it('returns the upstream JSON without its cost field and settles from it', async () => {
     const json = {
       choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
       usage: { prompt_tokens: 10, completion_tokens: 5 },
-      cost: { usd: 0.0002, diem: 0 },
     }
-    const { upstream } = scripted([], { json })
+    const { upstream } = scripted([], { json: { ...json, cost: { usd: 0.0002, diem: 0 } } })
     const res = await relayChat(deps(upstream), req(body({ stream: false })))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual(json)
