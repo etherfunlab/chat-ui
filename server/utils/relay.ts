@@ -46,7 +46,12 @@ export interface RelayRequest {
    * real usage (/v1: a script that hangs up must not dodge the bill).
    */
   disconnect: 'abort' | 'drain'
-  /** In drain mode, the work that may outlive the response (reading on and settling). */
+  /**
+   * Receives, as soon as a charge is open, a promise that resolves once it
+   * is settled. On a platform that terminates a function when the client
+   * disconnects, this is what keeps the settlement (and, in drain mode, the
+   * upstream read) alive.
+   */
   keepAlive?: (work: Promise<unknown>) => void
 }
 
@@ -67,12 +72,22 @@ function terminated(raw: string): string {
 
 /**
  * The upstream's own charge never reaches a client: what they owe is this
- * deployment's figure, not the provider's. Returns null when nothing changed.
+ * deployment's figure, not the provider's. Looks at the payload and at a
+ * nested response object (Responses stream events). Returns null when
+ * nothing changed.
  */
 function withoutCost(payload: unknown): Obj | null {
-  if (!isObj(payload) || !('cost' in payload)) return null
-  const { cost: _cost, ...rest } = payload
-  return rest
+  if (!isObj(payload)) return null
+  let out: Obj | null = null
+  if ('cost' in payload) {
+    const { cost: _cost, ...rest } = payload
+    out = rest
+  }
+  if (isObj(payload.response) && 'cost' in payload.response) {
+    const { cost: _cost, ...response } = payload.response
+    out = { ...(out ?? payload), response }
+  }
+  return out
 }
 
 const SETTLE_BACKOFF_MS = [0, 100, 400]
@@ -174,8 +189,21 @@ export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayReque
     seen.output += protocol.outputText(payload)
   }
 
+  // From here on a charge is open; whoever hosts us must let the settlement
+  // finish even if the client is gone.
+  let resolveSettled!: () => void
+  const settledPromise = new Promise<void>((r) => { resolveSettled = r })
+  req.keepAlive?.(settledPromise)
+
   let settling: Promise<{ event: ChatUsageEvent, settled: boolean }> | null = null
   const finish = (status: SettleStatus, charge: boolean) => settling ??= (async () => {
+    try {
+      return await settle(status, charge)
+    } finally {
+      resolveSettled()
+    }
+  })()
+  const settle = async (status: SettleStatus, charge: boolean) => {
     const webSearch = prepared.webSearch === 'on' || (prepared.webSearch === 'auto' && seen.citations.length > 0)
     const usage: Usage = charge
       ? { ...(seen.usage ?? { ...ZERO_USAGE, inputTokens, outputTokens: estimateTokens(seen.output) }), webSearch }
@@ -201,7 +229,7 @@ export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayReque
       }
     }
     return { event: { usage, costMicro: String(cost) }, settled: false }
-  })()
+  }
 
   // A streamed answer stops when the client leaves only in abort mode (the
   // reader saves the rest). A non-streamed one never does: nothing reaches
@@ -329,11 +357,7 @@ export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayReque
     } catch {}
   }
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const work = run(controller)
-      if (req.disconnect === 'drain') req.keepAlive?.(work)
-      return work
-    },
+    start: run,
     cancel() {
       if (followClient) ac.abort()
     },

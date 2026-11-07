@@ -59,12 +59,12 @@ describe('prepareResponses — shaping', () => {
   it('keeps only allowed fields and forces store off', () => {
     const p = prepareResponses(base({
       instructions: 'be brief', temperature: 0.2, include: ['reasoning.encrypted_content'], text: { format: { type: 'text' } },
-      store: true, metadata: { a: 1 }, user: 'u', truncation: 'auto', service_tier: 'flex',
+      store: true, metadata: { a: 1 }, user: 'u', service_tier: 'flex',
     }), models)
     expect(p.upstreamBody).toMatchObject({
       model: OPUS, input: 'hi', instructions: 'be brief', temperature: 0.2, include: ['reasoning.encrypted_content'], store: false,
     })
-    for (const k of ['metadata', 'user', 'truncation', 'service_tier']) expect(p.upstreamBody).not.toHaveProperty(k)
+    for (const k of ['metadata', 'user', 'service_tier']) expect(p.upstreamBody).not.toHaveProperty(k)
   })
 
   it('passes reasoning.summary through and drops effort for a model without effort control', () => {
@@ -81,13 +81,30 @@ describe('prepareResponses — shaping', () => {
     expect(prepareResponses(base(), models).webSearch).toBe('off')
   })
 
-  it('treats a web_search tool as search on, and forces search off for a model without it', () => {
-    const tools = [{ type: 'web_search' }, { type: 'function', name: 'f', parameters: {} }]
-    const p = prepareResponses(base({ tools }), models)
-    expect(p.webSearch).toBe('on')
-    expect(p.upstreamBody.tools).toEqual(tools)
+  it('treats any web_search* tool as search on, and drops it for a model without search', () => {
+    const fn = { type: 'function', name: 'f', parameters: {} }
+    for (const type of ['web_search', 'web_search_preview', 'web_search_2025_08_26']) {
+      const p = prepareResponses(base({ tools: [{ type }, fn] }), models)
+      expect(p.webSearch).toBe('on')
+      expect(p.upstreamBody.tools).toEqual([{ type }, fn])
+    }
     const noSearch = models.map(m => (m.id === OPUS ? { ...m, webSearch: false } : m))
-    expect(prepareResponses(base({ tools, venice_parameters: { enable_web_search: 'on' } }), noSearch).webSearch).toBe('off')
+    const q = prepareResponses(base({ tools: [{ type: 'web_search' }, fn], venice_parameters: { enable_web_search: 'on' } }), noSearch)
+    expect(q.webSearch).toBe('off')
+    expect(q.upstreamBody.tools).toEqual([fn])
+  })
+
+  it('rejects hosted tools this relay cannot meter', () => {
+    for (const type of ['code_interpreter', 'file_search', 'image_generation', 'mcp', 'computer_use_preview']) {
+      rejects(base({ tools: [{ type }] }), 'unsupported_parameter')
+    }
+    rejects(base({ tools: [{}] }), 'unsupported_parameter')
+    expect(prepareResponses(base({ tools: [{ type: 'custom', name: 'c' }] }), models).upstreamBody.tools).toEqual([{ type: 'custom', name: 'c' }])
+  })
+
+  it('passes prompt caching and truncation knobs through', () => {
+    const p = prepareResponses(base({ prompt_cache_key: 'session-1', truncation: 'auto', max_tool_calls: 3 }), models)
+    expect(p.upstreamBody).toMatchObject({ prompt_cache_key: 'session-1', truncation: 'auto', max_tool_calls: 3 })
   })
 
   it('derives requestedMaxOut from max_output_tokens, capped at the model maximum', () => {

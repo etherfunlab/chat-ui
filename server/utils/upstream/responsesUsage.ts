@@ -2,6 +2,7 @@ import type { Usage } from '#shared/billing'
 import type { Citation } from '#shared/chat'
 import { safeHttpUrl } from '#shared/url'
 import type { StreamEnd } from './protocol'
+import { reportedCostMicro } from './usage'
 
 type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null
@@ -30,6 +31,11 @@ export function usageFromResponses(payload: unknown): Usage | null {
     reasoningTokens: count(output.reasoning_tokens),
     webSearch: false,
   }
+}
+
+/** A reported cost on the payload or on the response object a stream event wraps. */
+export function reportedCostFromResponses(payload: unknown): number | null {
+  return reportedCostMicro(payload) ?? reportedCostMicro(responseOf(payload))
 }
 
 /** url_citation annotations on the output text parts. */

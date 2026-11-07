@@ -50,6 +50,13 @@ describe('GET /v1/models', () => {
     expect(walletForKey).not.toHaveBeenCalled()
   })
 
+  it('answers 503 ledger_unavailable when the key lookup fails', async () => {
+    walletForKey.mockRejectedValue(new Error('db down'))
+    const res = await run()
+    expect(res.status).toBe(503)
+    expect((await res.json()).error.code).toBe('ledger_unavailable')
+  })
+
   it('answers 503 when the catalog is unavailable', async () => {
     list.mockRejectedValue(new Error('down'))
     const res = await run()

@@ -193,6 +193,33 @@ describe('relayChat — streaming', () => {
     expect(await lastRecord()).toMatchObject({ status: 'ok', output_tokens: 20 })
   })
 
+  it('registers keepAlive before the upstream answers, resolving only once settled (both modes)', async () => {
+    for (const disconnect of ['drain', 'abort'] as const) {
+      const { upstream, calls, release } = gated([], [chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }), DONE])
+      let work: Promise<unknown> | null = null
+      const pending = relayChat(deps(upstream), req(body(), { disconnect, keepAlive: (w: Promise<unknown>) => { work = w } }))
+      await vi.waitFor(() => expect(calls).toHaveLength(1))
+      expect(work).not.toBeNull() // registered while the upstream has not even sent headers
+      let settled = false
+      void work!.then(() => { settled = true })
+      release()
+      await (await pending).text()
+      await work
+      expect(settled).toBe(true)
+      expect((await lastRecord())!.status).toBe('ok')
+    }
+  })
+
+  it('keeps a non-stream request alive until it is settled', async () => {
+    const json = { choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+    const { upstream } = scripted([], { json })
+    let work: Promise<unknown> | null = null
+    await relayChat(deps(upstream), req(body({ stream: false }), { disconnect: 'drain', keepAlive: (w: Promise<unknown>) => { work = w } }))
+    expect(work).not.toBeNull()
+    await work
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+  })
+
   it('strips cost from forwarded stream payloads but still charges by it', async () => {
     const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }, { usd: 0.001, diem: 0 }), DONE])
     const text = await (await relayChat(deps(upstream), req(body({ stream_options: { include_usage: true } })))).text()

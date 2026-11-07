@@ -59,7 +59,8 @@ Limits and billing:
 - A streamed answer is read to the end and billed on real usage even if the
   client disconnects. Hanging up does not stop the charge.
 - The upstream's `cost` field is not returned. The charge for each request is
-  the upstream cost plus this deployment's markup; see the usage page.
+  the upstream cost plus this deployment's markup, recorded against the
+  account per request.
 - `/v1` is open to any origin (CORS) with a Bearer key. Browser sessions use
   `/api` and are same-origin only.
 

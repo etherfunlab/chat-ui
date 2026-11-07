@@ -9,9 +9,13 @@ import { bearerHash } from '#server/utils/v1'
 export default defineEventHandler(async (event) => {
   const hash = bearerHash(event)
   if (hash instanceof Response) return sendWebResponse(event, hash)
-  if (!(await walletForKey(getPool(), getServerConfig(), hash))) {
-    return sendWebResponse(event, errorResponse(401, 'invalid_api_key', 'Invalid or revoked API key'))
+  let wallet: string | null
+  try {
+    wallet = await walletForKey(getPool(), getServerConfig(), hash)
+  } catch {
+    return sendWebResponse(event, errorResponse(503, 'ledger_unavailable', 'Billing is unavailable; try again shortly'))
   }
+  if (!wallet) return sendWebResponse(event, errorResponse(401, 'invalid_api_key', 'Invalid or revoked API key'))
   let models
   try {
     models = await getCatalog().list()

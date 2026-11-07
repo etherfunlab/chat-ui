@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
-import { waitUntil } from '@vercel/functions'
 import { hashApiKey, parseBearer } from './apiKeys'
 import { clientAbortSignal } from './abort'
+import { keepAlive } from './keepAlive'
 import type { RelayDeps, RelayRequest } from './relay'
 import { getRelayDeps } from './relayDeps'
 import { errorResponse } from './upstream/errors'
@@ -13,30 +13,31 @@ export function bearerHash(event: H3Event): string | Response {
   return hashApiKey(key)
 }
 
-/**
- * Lets server-side work outlive the response: on Vercel the function would
- * otherwise be frozen once the client is gone, before the upstream was read
- * to the end and the charge settled. Elsewhere this is a no-op.
- */
-export function keepAlive(event: H3Event, work: Promise<unknown>): void {
-  event.waitUntil(work)
-  waitUntil(work)
-}
-
 type RelayFn = (deps: RelayDeps, req: RelayRequest) => Promise<Response>
 
-/** A /v1 request through the relay: Bearer auth, drain on disconnect, no web-only usage event. */
+/**
+ * A /v1 request through the relay: Bearer auth, drain on disconnect, no
+ * web-only usage event. Whatever goes wrong, the client gets an
+ * OpenAI-shaped error, never the platform's page.
+ */
 export async function relayV1(event: H3Event, relayFn: RelayFn): Promise<unknown> {
   const hash = bearerHash(event)
   if (hash instanceof Response) return sendWebResponse(event, hash)
-  const rawBody = (await readRawBody(event, 'utf8')) ?? ''
-  const res = await relayFn(getRelayDeps(), {
-    auth: { keyHash: hash },
-    rawBody,
-    signal: clientAbortSignal(event),
-    emitUsageEvent: false,
-    disconnect: 'drain',
-    keepAlive: work => keepAlive(event, work),
-  })
+  let res: Response
+  try {
+    const rawBody = (await readRawBody(event, 'utf8')) ?? ''
+    res = await relayFn(getRelayDeps(), {
+      auth: { keyHash: hash },
+      rawBody,
+      signal: clientAbortSignal(event),
+      emitUsageEvent: false,
+      disconnect: 'drain',
+      keepAlive: work => keepAlive(event, work),
+    })
+  } catch (err) {
+    // Metering only (no content): the message names the failure, never the request.
+    console.error(`[v1] unexpected failure: ${(err as Error).name}: ${(err as Error).message}`)
+    res = errorResponse(500, 'internal_error', 'Something went wrong on this server')
+  }
   return sendWebResponse(event, res)
 }

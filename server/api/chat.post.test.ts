@@ -16,6 +16,8 @@ vi.mock('#server/utils/session', () => ({ requireWallet }))
 vi.mock('#server/utils/relay', () => ({ relayChat }))
 vi.mock('#server/utils/relayDeps', () => ({ getRelayDeps: () => ({ marker: 'deps' }) }))
 vi.mock('#server/utils/abort', () => ({ clientAbortSignal: () => signal }))
+const keepAlive = vi.fn()
+vi.mock('#server/utils/keepAlive', () => ({ keepAlive }))
 
 const { default: handler } = await import('./chat.post')
 const evt = {} as never
@@ -31,8 +33,11 @@ describe('POST /api/chat', () => {
   it('relays the raw body for the signed-in wallet with the usage event on', async () => {
     const res = await handler(evt)
     expect(relayChat).toHaveBeenCalledWith({ marker: 'deps' }, {
-      auth: { wallet: 'W' }, rawBody: '{"model":"m"}', signal, emitUsageEvent: true, disconnect: 'abort',
+      auth: { wallet: 'W' }, rawBody: '{"model":"m"}', signal, emitUsageEvent: true, disconnect: 'abort', keepAlive: expect.any(Function),
     })
+    const work = Promise.resolve()
+    relayChat.mock.calls[0]![1].keepAlive(work)
+    expect(keepAlive).toHaveBeenCalledWith(evt, work)
     expect(sendWebResponse).toHaveBeenCalledWith(evt, expect.any(Response))
     expect(await (res as unknown as Response).text()).toBe('ok')
   })

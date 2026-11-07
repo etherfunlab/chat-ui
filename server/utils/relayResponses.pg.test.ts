@@ -131,6 +131,18 @@ describe('relayResponses', () => {
     expect(await lastRecord()).toMatchObject({ status: 'ok', output_tokens: 20 })
   })
 
+  it('strips a cost nested in the completed event and still charges by it', async () => {
+    const { upstream } = scripted([
+      ev('response.output_text.delta', { delta: 'x' }),
+      ev('response.completed', { response: { status: 'completed', output: [], usage, cost: { usd: 0.001, diem: 0 } } }),
+      DONE,
+    ])
+    const text = await (await relayResponses(deps(upstream), req(body()))).text()
+    expect(text).toContain('event: response.completed')
+    expect(text).not.toContain('"cost"')
+    expect((await account()).balance).toBe(1_000_000 - 1100)
+  })
+
   it('charges the search fee for a web_search tool when no cost is reported', async () => {
     const { upstream } = scripted([ev('response.completed', { response: { status: 'completed', output: [], usage } }), DONE])
     await (await relayResponses(deps(upstream), req(body({ tools: [{ type: 'web_search' }] })))).text()

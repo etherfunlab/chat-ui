@@ -5,11 +5,16 @@ import { bad, checkImageCount, findModel, isObj, positiveInt, validEffort, venic
 /** Fields forwarded to the upstream; everything else is dropped. */
 const ALLOWED = [
   'model', 'input', 'instructions', 'stream', 'max_output_tokens', 'temperature', 'top_p', 'reasoning',
-  'tools', 'tool_choice', 'parallel_tool_calls', 'text', 'include', 'prompt_cache_retention',
+  'tools', 'tool_choice', 'parallel_tool_calls', 'max_tool_calls', 'text', 'include', 'truncation',
+  'prompt_cache_key', 'prompt_cache_retention',
 ] as const
 
 /** State the upstream does not keep: a client sends the full `input` every turn. */
 const UNSUPPORTED = ['previous_response_id', 'background', 'conversation'] as const
+
+/** Tool types this relay can meter: the client's own, and web search (billed as search). Hosted tools run outside metering. */
+const isSearchTool = (type: string) => type.startsWith('web_search')
+const TOOL_TYPES = new Set(['function', 'custom'])
 
 function countImages(input: unknown): number {
   if (!Array.isArray(input)) return 0
@@ -21,8 +26,25 @@ function countImages(input: unknown): number {
   return n
 }
 
-function hasWebSearchTool(tools: unknown): boolean {
-  return Array.isArray(tools) && tools.some(t => isObj(t) && t.type === 'web_search')
+/** Validates the tool list; returns it without search tools when the model cannot search. */
+function checkTools(tools: unknown, model: ModelEntry): { tools: Obj[] | undefined, search: boolean } {
+  if (tools === undefined) return { tools: undefined, search: false }
+  if (!Array.isArray(tools)) throw bad('tools must be an array')
+  let search = false
+  const kept: Obj[] = []
+  for (const t of tools) {
+    const type = isObj(t) && typeof t.type === 'string' ? t.type : ''
+    if (isSearchTool(type)) {
+      if (model.webSearch) {
+        search = true
+        kept.push(t as Obj)
+      }
+      continue
+    }
+    if (!TOOL_TYPES.has(type)) throw bad(`Unsupported tool type: ${type || '(missing)'}`, 'unsupported_parameter')
+    kept.push(t as Obj)
+  }
+  return { tools: kept, search }
 }
 
 /**
@@ -49,6 +71,8 @@ export function prepareResponses(body: unknown, models: ModelEntry[]): Prepared 
   const upstreamBody: Obj = {}
   for (const k of ALLOWED) if (body[k] !== undefined) upstreamBody[k] = body[k]
   upstreamBody.store = false
+  const { tools, search } = checkTools(body.tools, model)
+  if (tools !== undefined) upstreamBody.tools = tools
 
   if (isObj(body.reasoning)) {
     const { effort, ...rest } = body.reasoning
@@ -56,7 +80,7 @@ export function prepareResponses(body: unknown, models: ModelEntry[]): Prepared 
     upstreamBody.reasoning = valid !== undefined ? { ...rest, effort: valid } : rest
   }
 
-  const { params, webSearch } = veniceParameters(model, body.venice_parameters, hasWebSearchTool(body.tools))
+  const { params, webSearch } = veniceParameters(model, body.venice_parameters, search)
   upstreamBody.venice_parameters = params
 
   const asked = positiveInt(body.max_output_tokens, 'max_output_tokens') ?? model.maxOutputTokens

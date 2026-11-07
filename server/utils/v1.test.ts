@@ -12,10 +12,12 @@ vi.stubGlobal('getHeader', (e: { headers: Record<string, string> }, name: string
 const vercelWaitUntil = vi.fn()
 const signal = new AbortController().signal
 vi.mock('@vercel/functions', () => ({ waitUntil: vercelWaitUntil }))
+vi.mock('#server/utils/keepAlive', () => ({ keepAlive: (e: { waitUntil: (w: Promise<unknown>) => void }, w: Promise<unknown>) => { e.waitUntil(w); vercelWaitUntil(w) } }))
 vi.mock('#server/utils/relayDeps', () => ({ getRelayDeps: () => ({ marker: 'deps' }) }))
 vi.mock('#server/utils/abort', () => ({ clientAbortSignal: () => signal }))
 
-const { bearerHash, keepAlive, relayV1 } = await import('./v1')
+const { bearerHash, relayV1 } = await import('./v1')
+const { keepAlive } = await import('./keepAlive')
 
 const KEY = `cu-${'k'.repeat(43)}`
 const event = (headers: Record<string, string> = {}) => ({ headers, waitUntil: vi.fn() }) as never
@@ -72,6 +74,16 @@ describe('relayV1', () => {
     expect((res as Response).status).toBe(401)
     expect(relayFn).not.toHaveBeenCalled()
     expect(readRawBody).not.toHaveBeenCalled()
+  })
+
+  it('answers an unexpected failure in OpenAI shape instead of leaking a platform error', async () => {
+    const relayFn = vi.fn().mockRejectedValue(new RangeError('Maximum call stack size exceeded'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = (await relayV1(event({ authorization: `Bearer ${KEY}` }), relayFn)) as Response
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ error: { message: expect.any(String), type: 'api_error', code: 'internal_error' } })
+    expect(errors).toHaveBeenCalled()
+    errors.mockRestore()
   })
 
   it('treats an empty body as an empty string', async () => {
