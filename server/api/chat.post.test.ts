@@ -31,7 +31,7 @@ describe('POST /api/chat', () => {
   it('relays the raw body for the signed-in wallet with the usage event on', async () => {
     const res = await handler(evt)
     expect(relayChat).toHaveBeenCalledWith({ marker: 'deps' }, {
-      auth: { wallet: 'W' }, rawBody: '{"model":"m"}', signal, emitUsageEvent: true,
+      auth: { wallet: 'W' }, rawBody: '{"model":"m"}', signal, emitUsageEvent: true, disconnect: 'abort',
     })
     expect(sendWebResponse).toHaveBeenCalledWith(evt, expect.any(Response))
     expect(await (res as unknown as Response).text()).toBe('ok')

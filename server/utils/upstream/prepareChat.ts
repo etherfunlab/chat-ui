@@ -1,15 +1,6 @@
 import type { ModelEntry } from '#shared/models'
 import { RelayError } from './errors'
-
-export interface PreparedChat {
-  model: ModelEntry
-  upstreamBody: Record<string, unknown>
-  stream: boolean
-  /** Whether the client itself asked for the usage chunk in the stream. */
-  clientWantsUsage: boolean
-  requestedMaxOut: number
-  webSearch: 'on' | 'auto' | 'off'
-}
+import type { Prepared } from './protocol'
 
 /** Fields forwarded to the upstream; everything else is dropped. */
 const ALLOWED = [
@@ -45,7 +36,7 @@ function positiveInt(v: unknown, name: string): number | undefined {
  * prompt off, web search limited to on/off/auto, reasoning effort checked
  * against what the model offers, and usage forced into streams for metering.
  */
-export function prepareChat(body: unknown, models: ModelEntry[]): PreparedChat {
+export function prepareChat(body: unknown, models: ModelEntry[]): Prepared {
   if (!isObj(body)) throw bad('Request body must be a JSON object')
   const model = models.find(m => m.id === body.model)
   if (!model) {
@@ -80,7 +71,7 @@ export function prepareChat(body: unknown, models: ModelEntry[]): PreparedChat {
 
   const vp = isObj(body.venice_parameters) ? body.venice_parameters : {}
   const requested = vp.enable_web_search
-  const webSearch: PreparedChat['webSearch'] = !model.webSearch
+  const webSearch: Prepared['webSearch'] = !model.webSearch
     ? 'off'
     : requested === 'on' || requested === 'auto' ? requested : 'off'
   upstreamBody.venice_parameters = {

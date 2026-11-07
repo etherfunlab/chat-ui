@@ -14,6 +14,7 @@ export default defineEventHandler(async (event) => {
     rawBody,
     signal: clientAbortSignal(event),
     emitUsageEvent: true,
+    disconnect: 'abort',
   })
   return sendWebResponse(event, res)
 })
