@@ -54,6 +54,18 @@ describe('ApiKeysPanel', () => {
     expect((w.get('[data-role="key-name"]').element as HTMLInputElement).value).toBe('')
   })
 
+  it('survives a clipboard that refuses to write', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    const w = await mountPanel()
+    await w.get('[data-role="key-name"]').setValue('laptop')
+    await w.get('[data-role="create-key"]').trigger('click')
+    await flushPromises()
+    await w.get('[data-role="copy-key"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-role="copy-key"]').text()).toBe('chat.copy')
+    expect(w.get('[data-role="new-key"]').text()).toContain('cu-plaintext-once')
+  })
+
   it('does not create a key without a name', async () => {
     const w = await mountPanel()
     await w.get('[data-role="create-key"]').trigger('click')

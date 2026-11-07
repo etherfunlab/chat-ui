@@ -193,7 +193,12 @@ export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayReque
   // finish even if the client is gone.
   let resolveSettled!: () => void
   const settledPromise = new Promise<void>((r) => { resolveSettled = r })
-  req.keepAlive?.(settledPromise)
+  try {
+    req.keepAlive?.(settledPromise)
+  } catch (err) {
+    // The host could not promise to keep us alive; the charge is open, so carry on and settle as usual.
+    console.error(`[relay] keepAlive failed for charge ${id}: ${(err as Error).message}`)
+  }
 
   let settling: Promise<{ event: ChatUsageEvent, settled: boolean }> | null = null
   const finish = (status: SettleStatus, charge: boolean) => settling ??= (async () => {

@@ -210,6 +210,17 @@ describe('relayChat — streaming', () => {
     }
   })
 
+  it('still settles when keepAlive itself throws', async () => {
+    const { upstream } = scripted([chunk({ content: 'x' }), usageChunk({ prompt_tokens: 100, completion_tokens: 20 }), DONE])
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await relayChat(deps(upstream), req(body(), { keepAlive: () => { throw new Error('no runtime context') } }))
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(await lastRecord()).toMatchObject({ status: 'ok' })
+    expect((await account()).held).toBe(0)
+    errors.mockRestore()
+  })
+
   it('keeps a non-stream request alive until it is settled', async () => {
     const json = { choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
     const { upstream } = scripted([], { json })

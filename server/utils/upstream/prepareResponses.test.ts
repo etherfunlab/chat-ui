@@ -53,6 +53,19 @@ describe('prepareResponses — validation', () => {
     expect(prepareResponses(base({ model: DEEPSEEK, reasoning: { effort: 'none' } }), models).upstreamBody.reasoning).toEqual({ effort: 'none' })
   })
   it('rejects a non-positive max_output_tokens', () => rejects(base({ max_output_tokens: 0 }), 'invalid_request'))
+  it('rejects a reasoning value that is not an object', () => {
+    rejects(base({ reasoning: 'high' }), 'invalid_request')
+    rejects(base({ reasoning: ['high'] }), 'invalid_request')
+    expect(prepareResponses(base({ reasoning: null }), models).upstreamBody).not.toHaveProperty('reasoning')
+  })
+  it('drops a tool_choice that selects a search tool the model cannot use', () => {
+    const noSearch = models.map(m => (m.id === OPUS ? { ...m, webSearch: false } : m))
+    const p = prepareResponses(base({ tools: [{ type: 'web_search' }], tool_choice: { type: 'web_search' } }), noSearch)
+    expect(p.upstreamBody.tools).toEqual([])
+    expect(p.upstreamBody).not.toHaveProperty('tool_choice')
+    const q = prepareResponses(base({ tools: [{ type: 'web_search' }], tool_choice: { type: 'web_search' } }), models)
+    expect(q.upstreamBody.tool_choice).toEqual({ type: 'web_search' })
+  })
 })
 
 describe('prepareResponses — shaping', () => {

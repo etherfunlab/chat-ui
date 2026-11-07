@@ -25,8 +25,13 @@ async function createKey(): Promise<void> {
 
 async function copyKey(): Promise<void> {
   if (!newKey.value) return
-  await navigator.clipboard.writeText(newKey.value)
-  copied.value = true
+  try {
+    await navigator.clipboard.writeText(newKey.value)
+    copied.value = true
+  } catch {
+    // No clipboard here (insecure context or permission denied): the key stays on screen to select by hand.
+    copied.value = false
+  }
 }
 
 const day = (iso: string) => new Date(iso).toLocaleDateString()

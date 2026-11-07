@@ -71,7 +71,8 @@ export function outputTextFromResponses(payload: unknown): string {
   let s = ''
   for (const item of payload.output) {
     if (!isObj(item)) continue
-    if (typeof item.arguments === 'string') s += item.arguments
+    if (typeof item.arguments === 'string') s += item.arguments // function_call
+    if (typeof item.input === 'string') s += item.input // custom_tool_call
     for (const part of [...(Array.isArray(item.content) ? item.content : []), ...(Array.isArray(item.summary) ? item.summary : [])]) {
       if (isObj(part) && typeof part.text === 'string') s += part.text
     }

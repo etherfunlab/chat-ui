@@ -52,8 +52,9 @@ describe('outputTextFromResponses', () => {
       { type: 'reasoning', summary: [{ type: 'summary_text', text: 'plan ' }] },
       { type: 'message', content: [{ type: 'output_text', text: 'answer ' }] },
       { type: 'function_call', name: 'f', arguments: '{"x":1}' },
+      { type: 'custom_tool_call', name: 'c', input: 'SELECT 1' },
     ]
-    expect(outputTextFromResponses({ object: 'response', output })).toBe('plan answer {"x":1}')
+    expect(outputTextFromResponses({ object: 'response', output })).toBe('plan answer {"x":1}SELECT 1')
     // The completed event carries the whole response; counting it again would double the estimate.
     expect(outputTextFromResponses({ type: 'response.completed', response: { output } })).toBe('')
   })

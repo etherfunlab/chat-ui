@@ -73,11 +73,18 @@ export function prepareResponses(body: unknown, models: ModelEntry[]): Prepared 
   upstreamBody.store = false
   const { tools, search } = checkTools(body.tools, model)
   if (tools !== undefined) upstreamBody.tools = tools
+  // A choice of a search tool the model cannot use would name a tool no longer in the list.
+  if (!search && isObj(body.tool_choice) && typeof body.tool_choice.type === 'string' && isSearchTool(body.tool_choice.type)) {
+    delete upstreamBody.tool_choice
+  }
 
-  if (isObj(body.reasoning)) {
+  if (body.reasoning !== undefined && body.reasoning !== null) {
+    if (!isObj(body.reasoning)) throw bad('reasoning must be an object')
     const { effort, ...rest } = body.reasoning
     const valid = validEffort(model, effort)
     upstreamBody.reasoning = valid !== undefined ? { ...rest, effort: valid } : rest
+  } else {
+    delete upstreamBody.reasoning
   }
 
   const { params, webSearch } = veniceParameters(model, body.venice_parameters, search)
