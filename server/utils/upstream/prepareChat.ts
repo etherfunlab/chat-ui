@@ -1,6 +1,6 @@
 import type { ModelEntry } from '#shared/models'
-import { RelayError } from './errors'
 import type { Prepared } from './protocol'
+import { bad, checkImageCount, findModel, isObj, positiveInt, validEffort, veniceParameters, type Obj } from './validate'
 
 /** Fields forwarded to the upstream; everything else is dropped. */
 const ALLOWED = [
@@ -11,10 +11,6 @@ const ALLOWED = [
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool'])
 
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
-const bad = (message: string, code = 'invalid_request') => new RelayError(400, code, message)
-
 function countImages(messages: Obj[]): number {
   let n = 0
   for (const m of messages) {
@@ -22,12 +18,6 @@ function countImages(messages: Obj[]): number {
     for (const part of m.content) if (isObj(part) && part.type === 'image_url') n++
   }
   return n
-}
-
-function positiveInt(v: unknown, name: string): number | undefined {
-  if (v === undefined || v === null) return undefined
-  if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) throw bad(`${name} must be a positive integer`)
-  return v
 }
 
 /**
@@ -38,10 +28,7 @@ function positiveInt(v: unknown, name: string): number | undefined {
  */
 export function prepareChat(body: unknown, models: ModelEntry[]): Prepared {
   if (!isObj(body)) throw bad('Request body must be a JSON object')
-  const model = models.find(m => m.id === body.model)
-  if (!model) {
-    throw bad(`Unknown model: ${typeof body.model === 'string' ? body.model : '(not a string)'}`, 'model_not_found')
-  }
+  const model = findModel(body, models)
 
   const messages = body.messages
   if (!Array.isArray(messages) || messages.length === 0) throw bad('messages must be a non-empty array')
@@ -49,36 +36,19 @@ export function prepareChat(body: unknown, models: ModelEntry[]): Prepared {
     if (!isObj(m) || typeof m.role !== 'string' || !ROLES.has(m.role)) throw bad('Each message needs a valid role')
   }
   if (body.n !== undefined && body.n !== 1) throw bad('Only n = 1 is supported')
-
-  const images = countImages(messages as Obj[])
-  if (images > 0 && !model.vision) throw bad(`${model.name} does not accept images`, 'model_not_vision')
-  if (images > model.maxImages) throw bad(`${model.name} accepts at most ${model.maxImages} images`, 'too_many_images')
+  checkImageCount(countImages(messages as Obj[]), model)
 
   const upstreamBody: Obj = {}
   for (const k of ALLOWED) if (body[k] !== undefined) upstreamBody[k] = body[k]
 
   // Reasoning effort: one field upstream, validated against the model.
-  const effort = body.reasoning_effort ?? (isObj(body.reasoning) ? body.reasoning.effort : undefined)
+  const effort = validEffort(model, body.reasoning_effort ?? (isObj(body.reasoning) ? body.reasoning.effort : undefined))
   delete upstreamBody.reasoning
   delete upstreamBody.reasoning_effort
-  if (effort !== undefined && model.reasoning.effortOptions.length > 0) {
-    const allowed = [...model.reasoning.effortOptions, ...(model.reasoning.canDisable ? ['none'] : [])]
-    if (typeof effort !== 'string' || !allowed.includes(effort)) {
-      throw bad(`reasoning_effort for ${model.name} must be one of: ${allowed.join(', ')}`, 'invalid_reasoning_effort')
-    }
-    upstreamBody.reasoning_effort = effort
-  }
+  if (effort !== undefined) upstreamBody.reasoning_effort = effort
 
-  const vp = isObj(body.venice_parameters) ? body.venice_parameters : {}
-  const requested = vp.enable_web_search
-  const webSearch: Prepared['webSearch'] = !model.webSearch
-    ? 'off'
-    : requested === 'on' || requested === 'auto' ? requested : 'off'
-  upstreamBody.venice_parameters = {
-    include_venice_system_prompt: false,
-    enable_web_search: webSearch,
-    ...(typeof vp.enable_web_citations === 'boolean' ? { enable_web_citations: vp.enable_web_citations } : {}),
-  }
+  const { params, webSearch } = veniceParameters(model, body.venice_parameters)
+  upstreamBody.venice_parameters = params
 
   const stream = body.stream === true
   const clientWantsUsage = stream && isObj(body.stream_options) && body.stream_options.include_usage === true

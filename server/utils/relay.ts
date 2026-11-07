@@ -11,6 +11,7 @@ import type { Queryable } from './queryable'
 import { chatProtocol } from './upstream/chatProtocol'
 import { errorResponse, RelayError } from './upstream/errors'
 import type { Prepared, Protocol, StreamEnd } from './upstream/protocol'
+import { responsesProtocol } from './upstream/responsesProtocol'
 
 /** Above this the platform rejects the request anyway; refuse it ourselves first. */
 export const MAX_BODY_BYTES = 4_500_000
@@ -342,3 +343,5 @@ export async function relay(deps: RelayDeps, protocol: Protocol, req: RelayReque
 
 /** OpenAI chat completions through the metered relay. */
 export const relayChat = (deps: RelayDeps, req: RelayRequest): Promise<Response> => relay(deps, chatProtocol, req)
+/** OpenAI Responses API through the metered relay. */
+export const relayResponses = (deps: RelayDeps, req: RelayRequest): Promise<Response> => relay(deps, responsesProtocol, req)
