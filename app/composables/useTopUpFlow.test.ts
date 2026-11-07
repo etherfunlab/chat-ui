@@ -36,12 +36,13 @@ describe('waitForIntent', () => {
 })
 
 describe('topUpMessage', () => {
-  it('never claims completion for anything but a confirmed top-up', () => {
-    expect(topUpMessage('confirmed')).toBe('Top-up complete.')
-    expect(topUpMessage('submitting')).toMatch(/still confirming/i)
-    expect(topUpMessage('failed')).toMatch(/failed/i)
-    expect(topUpMessage('expired')).toMatch(/expired/i)
-    expect(topUpMessage('pending')).not.toMatch(/complete/i)
+  it('returns an i18n key, and only a confirmed top-up maps to completion', () => {
+    expect(topUpMessage('confirmed')).toBe('topup.status.confirmed')
+    expect(topUpMessage('submitting')).toBe('topup.status.submitting')
+    expect(topUpMessage('failed')).toBe('topup.status.failed')
+    expect(topUpMessage('expired')).toBe('topup.status.expired')
+    expect(topUpMessage('pending')).toBe('topup.status.notSubmitted')
+    expect(topUpMessage('anything-else')).toBe('topup.status.notSubmitted')
   })
 })
 

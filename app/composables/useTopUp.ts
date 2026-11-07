@@ -29,7 +29,7 @@ const toBase64 = (bytes: Uint8Array): string => btoa(Array.from(bytes, b => Stri
  */
 export async function performTopUp(d: TopUpDeps): Promise<TopUpResult & { intentId: string }> {
   if (d.connectedWallet !== d.sessionWallet) {
-    throw new Error('The connected wallet differs from the signed-in wallet')
+    throw Object.assign(new Error('The connected wallet differs from the signed-in wallet'), { code: 'wallet_mismatch' })
   }
   const { intentId, transactionBase64 } = await d.fetcher('/api/topup/intent', {
     method: 'POST',
@@ -75,15 +75,19 @@ export async function waitForIntent(
   return 'submitting'
 }
 
+/** The i18n key describing a top-up's final status. */
 export function topUpMessage(status: string): string {
   switch (status) {
-    case 'confirmed': return 'Top-up complete.'
-    case 'submitting': return 'Still confirming on chain. Your balance updates once it lands — you can leave this page.'
-    case 'expired': return 'The transaction expired before it was sent. Please try again.'
-    case 'failed': return 'Top-up failed.'
-    default: return 'The top-up was not submitted.'
+    case 'confirmed': return 'topup.status.confirmed'
+    case 'submitting': return 'topup.status.submitting'
+    case 'expired': return 'topup.status.expired'
+    case 'failed': return 'topup.status.failed'
+    default: return 'topup.status.notSubmitted'
   }
 }
+
+/** What the panel shows: an i18n key, or upstream text with no translation. */
+export type TopUpStatusText = { key: string } | { text: string } | null
 
 /**
  * Finishes top-ups left in flight by an earlier visit (closed tab, slow chain).
@@ -101,17 +105,17 @@ export async function resumePendingTopUps(o: { me: Me | null, fetcher: Fetcher, 
 
 export function useTopUp() {
   const { me, refreshMe } = useWalletAuth()
-  const status = ref<string>('')
+  const status = ref<TopUpStatusText>(null)
   const busy = ref(false)
 
   async function topUp(amount: string): Promise<void> {
     if (!me.value) return
     busy.value = true
-    status.value = 'Waiting for wallet signature…'
+    status.value = { key: 'topup.waitingSignature' }
     try {
       const { publicKey, signTransaction } = useWallet()
       const sign = signTransaction.value
-      if (!sign) throw new Error('This wallet cannot sign transactions')
+      if (!sign) throw Object.assign(new Error('This wallet cannot sign transactions'), { code: 'cannot_sign' })
       const result = await performTopUp({
         amount,
         connectedWallet: publicKey.value?.toBase58() ?? null,
@@ -121,7 +125,7 @@ export function useTopUp() {
       })
       let final: string = result.status
       if (final === 'submitting') {
-        status.value = 'Confirming on chain…'
+        status.value = { key: 'topup.confirming' }
         final = await waitForIntent(result.intentId, {
           fetcher: $fetch as never,
           sleep: ms => new Promise(r => setTimeout(r, ms)),
@@ -129,11 +133,15 @@ export function useTopUp() {
           limitMs: 120_000,
         })
       }
-      status.value = topUpMessage(final)
+      status.value = { key: topUpMessage(final) }
       await refreshMe()
     } catch (err) {
-      const code = (err as { data?: { data?: { code?: string } } }).data?.data?.code
-      status.value = code === 'insufficient_funds' ? 'Not enough USDC or SOL in this wallet.' : (err as Error).message
+      const e = err as { code?: string, data?: { data?: { code?: string } }, message?: string }
+      const code = e.data?.data?.code ?? e.code
+      status.value = code === 'insufficient_funds' ? { key: 'topup.insufficientFunds' }
+        : code === 'wallet_mismatch' ? { key: 'topup.walletMismatch' }
+          : code === 'cannot_sign' ? { key: 'topup.cannotSign' }
+            : { text: e.message ?? 'Top-up failed' }
     } finally {
       busy.value = false
     }

@@ -1,7 +1,11 @@
 import { fileURLToPath } from 'node:url'
+import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // Component tests mount SFCs directly; components import Vue APIs
+  // explicitly so they compile outside Nuxt's auto-imports.
+  plugins: [vue()],
   resolve: {
     // Mirror the aliases Nuxt provides (#server/#shared are built in there).
     alias: {
