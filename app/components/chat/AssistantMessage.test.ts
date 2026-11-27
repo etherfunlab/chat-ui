@@ -19,10 +19,13 @@ const WINDOW = '[data-part="window"]'
 const PILL = '[data-part="pill"]'
 
 describe('AssistantMessage: thinking', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('shows the window from the moment a thinking request is sent, and no waiting line', () => {
     const w = show(message({ status: 'streaming', thinkingRequested: true }))
-    expect(has(w, WINDOW)).toBe(true)
-    expect(w.text()).toContain('chat.thinking')
+    expect(w.get(WINDOW).text()).toBe('chat.thinking')
     expect(w.text()).not.toContain('chat.waiting')
   })
 
@@ -32,10 +35,18 @@ describe('AssistantMessage: thinking', () => {
     expect(w.text()).toContain('chat.waiting')
   })
 
-  it('hands over to the window when thinking text arrives on a request that did not ask for it', () => {
-    const w = show(message({ status: 'streaming', thinkingRequested: false, reasoning: 'hm' }))
+  it('hands over to the window when thinking text arrives on a request that did not ask for it', async () => {
+    const w = show(message({ status: 'streaming', thinkingRequested: false }))
+    expect(has(w, WINDOW)).toBe(false)
+    await w.setProps({ message: message({ status: 'streaming', thinkingRequested: false, reasoning: 'hm' }) })
     expect(w.get('[data-part="window-text"]').text()).toBe('hm')
     expect(w.text()).not.toContain('chat.waiting')
+  })
+
+  it('keeps the thinking text reachable on an answer settled after a closed tab', () => {
+    const w = show(message({ status: 'aborted', thinkingRequested: true, reasoning: 'hm', reasoningMs: 0 }))
+    expect(has(w, WINDOW)).toBe(false)
+    expect(w.get(PILL).text()).toBe('chat.thoughtFor:{"n":1}')
   })
 
   it('turns the window into the pill as soon as answer text arrives', async () => {
@@ -79,7 +90,5 @@ describe('AssistantMessage: thinking', () => {
     const w = show(message({ status: 'streaming', thinkingRequested: true }))
     await vi.advanceTimersByTimeAsync(3000)
     expect(w.get('[data-part="elapsed"]').text()).toBe('chat.thinkingElapsed:{"n":3}')
-    w.unmount()
-    vi.useRealTimers()
   })
 })
