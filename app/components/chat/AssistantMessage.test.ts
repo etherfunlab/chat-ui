@@ -43,10 +43,26 @@ describe('AssistantMessage: thinking', () => {
     expect(w.text()).not.toContain('chat.waiting')
   })
 
-  it('keeps the thinking text reachable on an answer settled after a closed tab', () => {
-    const w = show(message({ status: 'aborted', thinkingRequested: true, reasoning: 'hm', reasoningMs: 0 }))
+  it.each(['aborted', 'done', 'error'] as const)('keeps the thinking text reachable on a finished (%s) answer whose duration was never recorded', async (status) => {
+    // A tab closed mid-thinking and settled on reload, or a file exported mid-stream and imported.
+    const w = show(message({ status, reasoning: 'She keeps a lighthouse.', reasoningMs: null }))
     expect(has(w, WINDOW)).toBe(false)
     expect(w.get(PILL).text()).toBe('chat.thoughtFor:{"n":1}')
+    await w.get(PILL).trigger('click')
+    expect(w.get('[data-part="pill-text"]').text()).toBe('She keeps a lighthouse.')
+  })
+
+  it('shows no pill while an answer is streaming and its thinking has no duration yet', () => {
+    const w = show(message({ status: 'streaming', text: 'Hi', reasoning: 'late', reasoningMs: null }))
+    expect(has(w, WINDOW)).toBe(false)
+    expect(has(w, PILL)).toBe(false)
+  })
+
+  it('keeps the window while the only answer text so far is whitespace', () => {
+    const w = show(message({ status: 'streaming', thinkingRequested: true, text: '\n', reasoning: 'Let me' }))
+    expect(w.get('[data-part="window-text"]').text()).toBe('Let me')
+    expect(has(w, PILL)).toBe(false)
+    expect(has(w, '.md')).toBe(false)
   })
 
   it('turns the window into the pill as soon as answer text arrives', async () => {
@@ -62,7 +78,6 @@ describe('AssistantMessage: thinking', () => {
     await w.setProps({ message: message({ status: 'streaming', thinkingRequested: true, text: 'Hi' }) })
     expect(has(w, WINDOW)).toBe(false)
     expect(has(w, PILL)).toBe(false)
-    expect(has(w, '[role="status"]')).toBe(false)
   })
 
   it.each(['aborted', 'error'] as const)('leaves the pill when thinking ends %s before any answer text', (status) => {

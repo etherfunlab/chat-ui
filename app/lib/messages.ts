@@ -9,9 +9,7 @@ export function settleStale(messages: StoredMessage[], liveId: string | null): {
   const changed: StoredMessage[] = []
   const out = messages.map((m) => {
     if (m.status !== 'streaming' || m.id === liveId) return m
-    // How long it thought is unknown; a duration keeps the thinking text reachable.
-    const reasoningMs = m.reasoningMs ?? (m.reasoning ? 0 : null)
-    const fixed = { ...m, status: 'aborted' as const, reasoningMs }
+    const fixed = { ...m, status: 'aborted' as const }
     changed.push(fixed)
     return fixed
   })

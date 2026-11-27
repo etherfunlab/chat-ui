@@ -60,6 +60,39 @@ describe('createChatSender: thinking', () => {
     expect(answer.reasoningMs).toBeGreaterThan(0)
   })
 
+  it('does not count whitespace ahead of the thinking as the start of the answer', async () => {
+    const seen: Array<{ text: string, ms: number | null }> = []
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '\n', reasoning: 'Let me' })
+      onDelta({ text: '', reasoning: ' think' })
+      onDelta({ text: 'Hi', reasoning: '' })
+    })
+    const answer = await s.send({ ...baseInput(), onUpdate: m => seen.push({ text: m.text, ms: m.reasoningMs }) })
+    expect(seen.filter(u => !u.text.trim()).every(u => u.ms === null)).toBe(true)
+    expect(seen.find(u => u.text.includes('Hi'))!.ms).toBeGreaterThan(0)
+    expect(answer.reasoning).toBe('Let me think')
+  })
+
+  it.each(['abort', 'failure'] as const)('stamps the duration when thinking is cut short by %s', async (how) => {
+    const controller = new AbortController()
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '', reasoning: 'hm' })
+      if (how === 'abort') controller.abort()
+      throw new Error('cut')
+    })
+    const answer = await s.send({ ...baseInput(), signal: controller.signal })
+    expect(answer.status).toBe(how === 'abort' ? 'aborted' : 'error')
+    expect(answer.reasoningMs).toBeGreaterThan(0)
+  })
+
+  it('still stamps a duration when thinking arrives only after the answer began', async () => {
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: 'Hi', reasoning: '' })
+      onDelta({ text: '', reasoning: 'late' })
+    })
+    expect((await s.send(baseInput())).reasoningMs).toBeGreaterThan(0)
+  })
+
   it('leaves the duration empty when the model sent no thinking', async () => {
     const { s } = sender(async ({ onDelta }) => {
       onDelta({ text: 'Hi', reasoning: '' })

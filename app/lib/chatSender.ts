@@ -104,10 +104,13 @@ export function createChatSender(deps: SenderDeps) {
         onDelta: (d) => {
           answer.reasoning += d.reasoning
           if (d.text) {
+            answer.text += d.text
             // Thinking is over once the answer starts. Stamping the duration
             // here lets the view swap the live thinking for its summary at once.
-            if (answer.reasoning && answer.reasoningMs === null) answer.reasoningMs = deps.now() - started
-            answer.text += d.text
+            // Whitespace alone is not a start: some models emit a newline first.
+            if (answer.reasoning && answer.reasoningMs === null && answer.text.trim()) {
+              answer.reasoningMs = deps.now() - started
+            }
           }
           i.onUpdate({ ...answer })
           flush()
