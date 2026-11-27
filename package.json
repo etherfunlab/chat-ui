@@ -27,6 +27,7 @@
     "@solana/wallet-adapter-phantom": "^0.9.29",
     "@solana/wallet-adapter-solflare": "^0.6.33",
     "@solana/web3.js": "^1.98.4",
+    "@vercel/functions": "^3.11.0",
     "bignumber.js": "^11.1.5",
     "bs58": "^6.0.0",
     "dexie": "^4.4.5",

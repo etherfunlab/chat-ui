@@ -95,6 +95,18 @@ export default {
     "import": "Import chats",
     "imported": "Imported {imported}, saved {copied} as copies.",
     "importFailed": "That file is not a chat-ui export.",
+    "apiKeys": "API keys",
+    "apiKeysHint": "Use this site as an OpenAI-compatible API from other tools. Requests are billed to this account. Base URL:",
+    "keyName": "Key name",
+    "createKey": "Create key",
+    "revokeKey": "Revoke",
+    "keyRevoked": "Revoked",
+    "keyNeverUsed": "Never used",
+    "keyLastUsed": "Last used {date}",
+    "keyShownOnce": "Copy this key now. It is shown only once.",
+    "tooManyKeys": "Too many active keys. Revoke one first.",
+    "invalidKeyName": "Give the key a name of up to 40 characters.",
+    "keyFailed": "That did not work. Try again.",
     "account": "Account",
     "signOut": "Sign out"
   }

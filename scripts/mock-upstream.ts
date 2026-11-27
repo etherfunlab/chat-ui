@@ -2,7 +2,7 @@
 // spending real credits. Run `bun run mock:upstream`, then start the app with
 // VENICE_BASE_URL=http://localhost:8787 and MODELS limited to the fixture's
 // four models (see the printed hint).
-import { createServer } from 'node:http'
+import { createServer, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -33,13 +33,14 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ object: 'list', ...models }))
     return
   }
-  if (req.method !== 'POST' || url.pathname !== '/chat/completions') {
+  if (req.method !== 'POST' || (url.pathname !== '/chat/completions' && url.pathname !== '/responses')) {
     res.writeHead(404).end()
     return
   }
 
   let raw = ''
   for await (const part of req) raw += part
+  if (url.pathname === '/responses') return serveResponses(raw, res)
   const body = JSON.parse(raw) as {
     stream?: boolean
     reasoning_effort?: string
@@ -77,6 +78,31 @@ const server = createServer(async (req, res) => {
   send({ choices: [], usage, cost })
   res.end('data: [DONE]\n\n')
 })
+
+/** The Responses API shape: a response object, or its event stream ending in [DONE]. */
+async function serveResponses(raw: string, res: ServerResponse): Promise<void> {
+  const body = JSON.parse(raw) as { stream?: boolean }
+  const text = ANSWER.join('').replace(/ \^\d\^/g, '')
+  const usage = { input_tokens: 812, output_tokens: 164, total_tokens: 976, output_tokens_details: { reasoning_tokens: 40 } }
+  const response = (status: string, output: unknown[]) => ({ id: 'resp_mock', object: 'response', status, output, usage })
+  const message = { id: 'msg_mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] }
+
+  if (!body.stream) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(response('completed', [message])))
+    return
+  }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+  const send = (type: string, extra: Record<string, unknown>) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...extra })}\n\n`)
+  send('response.created', { response: response('in_progress', []) })
+  for (const piece of ANSWER.map(p => p.replace(/ \^\d\^/g, ''))) {
+    await sleep(80)
+    if (res.destroyed) return
+    send('response.output_text.delta', { item_id: 'msg_mock', output_index: 0, content_index: 0, delta: piece })
+  }
+  send('response.completed', { response: response('completed', [message]) })
+  res.end('data: [DONE]\n\n')
+}
 
 server.listen(PORT, () => {
   console.log(`mock upstream on http://localhost:${PORT}`)
