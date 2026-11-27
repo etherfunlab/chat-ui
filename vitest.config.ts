@@ -12,6 +12,8 @@ export default defineConfig({
       '#server': fileURLToPath(new URL('./server', import.meta.url)),
       '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
       '@@': fileURLToPath(new URL('.', import.meta.url)),
+      // The shared chat components, vendored as a git submodule and compiled from source.
+      '@etherfunlab/vue-llm-ui': fileURLToPath(new URL('./vendor/vue-llm-ui/src/index.ts', import.meta.url)),
       '~': fileURLToPath(new URL('./app', import.meta.url)),
     },
   },

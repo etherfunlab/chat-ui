@@ -9,6 +9,15 @@ deployment doubles as an OpenAI-compatible API.
 
 ## Development
 
+The chat components come from a git submodule. Clone with `--recurse-submodules`,
+or run this once in an existing clone:
+
+```bash
+git submodule update --init
+```
+
+Then:
+
 ```bash
 bun install
 cp .env.example .env   # fill in the blanks
