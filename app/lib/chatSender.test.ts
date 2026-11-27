@@ -9,6 +9,8 @@ import { ChatApiError } from './chatStream'
 import { BODY_LIMIT_BYTES } from './chatRequest'
 
 const OPUS = toModelEntry(fixture.data.find(m => m.id === 'claude-opus-5-5'))! as ModelEntry
+/** A model whose thinking can be turned off. */
+const DEEPSEEK = toModelEntry(fixture.data.find(m => m.id === 'deepseek-v4-1-flash-1017-uncensored'))! as ModelEntry
 let store: ChatStore
 let n = 0
 let clock = 0
@@ -27,6 +29,91 @@ function sender(stream: Parameters<typeof createChatSender>[0]['stream']) {
 beforeEach(async () => {
   store = createStore(`sender-${++n}`)
   await store.putSession(session())
+})
+
+const baseInput = () => ({
+  session: session(), model: OPUS, text: 'hi', images: [], systemPrompt: null,
+  signal: new AbortController().signal, onUpdate() {},
+})
+
+describe('createChatSender: thinking', () => {
+  it('stamps the thinking duration when the answer text starts, not when the stream ends', async () => {
+    const seen: Array<{ text: string, ms: number | null }> = []
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '', reasoning: 'hm' })
+      onDelta({ text: 'Hi', reasoning: '' })
+      onDelta({ text: ' there', reasoning: '' })
+    })
+    const answer = await s.send({ ...baseInput(), onUpdate: m => seen.push({ text: m.text, ms: m.reasoningMs }) })
+    const first = seen.find(u => u.text === 'Hi')!
+    expect(first.ms).toBeGreaterThan(0)
+    expect(seen.filter(u => u.text === '').every(u => u.ms === null)).toBe(true)
+    expect(answer.reasoningMs).toBe(first.ms)
+  })
+
+  it('stamps the duration at the end when the stream stops before any answer text', async () => {
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '', reasoning: 'hm' })
+    })
+    const answer = await s.send(baseInput())
+    expect(answer.text).toBe('')
+    expect(answer.reasoningMs).toBeGreaterThan(0)
+  })
+
+  it('does not count whitespace ahead of the thinking as the start of the answer', async () => {
+    const seen: Array<{ text: string, ms: number | null }> = []
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '\n', reasoning: 'Let me' })
+      onDelta({ text: '', reasoning: ' think' })
+      onDelta({ text: 'Hi', reasoning: '' })
+    })
+    const answer = await s.send({ ...baseInput(), onUpdate: m => seen.push({ text: m.text, ms: m.reasoningMs }) })
+    expect(seen.filter(u => !u.text.trim()).every(u => u.ms === null)).toBe(true)
+    expect(seen.find(u => u.text.includes('Hi'))!.ms).toBeGreaterThan(0)
+    expect(answer.reasoning).toBe('Let me think')
+  })
+
+  it.each(['abort', 'failure'] as const)('stamps the duration when thinking is cut short by %s', async (how) => {
+    const controller = new AbortController()
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: '', reasoning: 'hm' })
+      if (how === 'abort') controller.abort()
+      throw new Error('cut')
+    })
+    const answer = await s.send({ ...baseInput(), signal: controller.signal })
+    expect(answer.status).toBe(how === 'abort' ? 'aborted' : 'error')
+    expect(answer.reasoningMs).toBeGreaterThan(0)
+  })
+
+  it('still stamps a duration when thinking arrives only after the answer began', async () => {
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: 'Hi', reasoning: '' })
+      onDelta({ text: '', reasoning: 'late' })
+    })
+    expect((await s.send(baseInput())).reasoningMs).toBeGreaterThan(0)
+  })
+
+  it('leaves the duration empty when the model sent no thinking', async () => {
+    const { s } = sender(async ({ onDelta }) => {
+      onDelta({ text: 'Hi', reasoning: '' })
+    })
+    expect((await s.send(baseInput())).reasoningMs).toBeNull()
+  })
+
+  it('records whether the request asked the model to think', async () => {
+    const stream = async () => {}
+    const off = { enabled: false, effort: null }
+    const send = (model: ModelEntry, thinking: StoredSession['thinking']) =>
+      sender(stream).s.send({ ...baseInput(), model, session: session({ model: model.id, thinking }) })
+
+    expect((await send(OPUS, { enabled: true, effort: 'high' })).thinkingRequested).toBe(true)
+    // This model cannot turn thinking off, so the request still thinks.
+    expect((await send(OPUS, off)).thinkingRequested).toBe(true)
+    expect((await send(DEEPSEEK, { enabled: true, effort: 'high' })).thinkingRequested).toBe(true)
+    expect((await send(DEEPSEEK, off)).thinkingRequested).toBe(false)
+    const plain: ModelEntry = { ...OPUS, reasoning: { ...OPUS.reasoning, supported: false } }
+    expect((await send(plain, { enabled: true, effort: 'high' })).thinkingRequested).toBe(false)
+  })
 })
 
 describe('createChatSender', () => {

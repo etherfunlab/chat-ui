@@ -1,0 +1,3 @@
+[submodule "vendor/vue-llm-ui"]
+	path = vendor/vue-llm-ui
+	url = https://github.com/etherfunlab/vue-llm-ui.git

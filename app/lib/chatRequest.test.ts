@@ -16,7 +16,7 @@ const NO_VISION: ModelEntry = { ...OPUS, vision: false, maxImages: 0 }
 
 let n = 0
 const msg = (over: Partial<StoredMessage> = {}): StoredMessage => ({
-  id: `m${++n}`, sessionId: 's', role: 'user', text: 'hi', images: [], reasoning: '', reasoningMs: null,
+  id: `m${++n}`, sessionId: 's', role: 'user', text: 'hi', images: [], reasoning: '', reasoningMs: null, thinkingRequested: false,
   citations: [], usage: null, status: 'done', error: null, omittedImages: 0, model: OPUS.id, createdAt: n, ...over,
 })
 const img = (mb: number) => `data:image/jpeg;base64,${'A'.repeat(Math.round(mb * 1_000_000))}`

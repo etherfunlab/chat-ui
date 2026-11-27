@@ -28,6 +28,8 @@ export interface StoredMessage {
   images: string[]
   reasoning: string
   reasoningMs: number | null
+  /** The request asked the model to think (assistant messages). */
+  thinkingRequested: boolean
   citations: Citation[]
   usage: ChatUsageEvent | null
   status: 'done' | 'streaming' | 'aborted' | 'error'
@@ -148,6 +150,7 @@ function sanitizeMessage(v: unknown, sessionModel: string): Omit<StoredMessage, 
     images,
     reasoning: str(v.reasoning, ''),
     reasoningMs: typeof v.reasoningMs === 'number' && v.reasoningMs >= 0 ? v.reasoningMs : null,
+    thinkingRequested: v.thinkingRequested === true,
     citations,
     usage: sanitizeUsage(v.usage),
     status: typeof v.status === 'string' && STATUSES.has(v.status) ? v.status as StoredMessage['status'] : 'done',

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ThinkingBlock, type ThinkingLabels } from '@etherfunlab/vue-llm-ui'
 import { formatCost } from '#shared/money'
 import { safeHttpUrl } from '#shared/url'
 import { renderMarkdown } from '~/lib/markdown'
 import type { StoredMessage } from '~/lib/store'
-import ThinkingBlock from './ThinkingBlock.vue'
 
 const props = defineProps<{ message: StoredMessage }>()
 const { t } = useI18n()
@@ -13,8 +13,21 @@ const html = computed(() => renderMarkdown(props.message.text, props.message.cit
 const sources = computed(() => props.message.citations
   .map((c, i) => ({ n: i + 1, title: c.title, url: safeHttpUrl(c.url) }))
   .filter((c): c is { n: number, title: string, url: string } => c.url !== null))
-const thinkingLive = computed(() => props.message.status === 'streaming' && !props.message.text)
-const waiting = computed(() => props.message.status === 'streaming' && !props.message.text && !props.message.reasoning)
+// DESIGN.md §5. Before the answer starts: a request that asked for thinking, or
+// one that got thinking text anyway, shows the live window; the rest wait.
+// Whitespace alone is not an answer: some models emit a newline before they think.
+const answerStarted = computed(() => props.message.text.trim() !== '')
+const beforeAnswer = computed(() => props.message.status === 'streaming' && !answerStarted.value)
+const thinking = computed(() => beforeAnswer.value && (props.message.thinkingRequested === true || !!props.message.reasoning))
+const waiting = computed(() => beforeAnswer.value && !thinking.value)
+// A finished answer whose thinking was never timed (a tab closed mid-thinking,
+// an import) still gets its summary, so the thinking text stays reachable.
+const thinkingMs = computed(() => (props.message.status === 'streaming' ? props.message.reasoningMs : props.message.reasoningMs ?? 0))
+const thinkingLabels = computed<ThinkingLabels>(() => ({
+  thinking: t('chat.thinking'),
+  elapsed: n => t('chat.thinkingElapsed', { n }),
+  done: n => t('chat.thoughtFor', { n }),
+}))
 const meta = computed(() => {
   const u = props.message.usage
   if (!u) return ''
@@ -57,13 +70,14 @@ async function onClick(e: MouseEvent): Promise<void> {
       {{ t('chat.waiting') }}
     </p>
     <ThinkingBlock
-      v-if="message.reasoning"
-      :reasoning="message.reasoning"
-      :streaming="thinkingLive"
-      :ms="message.reasoningMs"
+      v-if="thinking || message.reasoning"
+      :text="message.reasoning"
+      :active="thinking"
+      :ms="thinkingMs"
+      :labels="thinkingLabels"
     />
     <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapes all raw HTML -->
-    <div v-if="message.text" class="md min-w-0 font-native text-[16px] leading-[1.45] text-ink" @click="onClick" v-html="html" />
+    <div v-if="answerStarted" class="md min-w-0 font-native text-[16px] leading-[1.45] text-ink" @click="onClick" v-html="html" />
     <div v-if="sources.length" class="flex flex-wrap gap-1.5">
       <a
         v-for="c in sources" :key="c.n" :href="c.url" :title="c.title"

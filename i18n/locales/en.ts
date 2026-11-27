@@ -33,8 +33,9 @@ export default {
     "loadingWallet": "Loading wallet…"
   },
   "chat": {
-    "thinking": "Thinking…",
-    "thoughtFor": "Thought for {s} s",
+    "thinking": "Thinking",
+    "thinkingElapsed": "{n}s",
+    "thoughtFor": "Thought for {n}s",
     "waiting": "Waiting for the model…",
     "copy": "Copy",
     "copied": "Copied",

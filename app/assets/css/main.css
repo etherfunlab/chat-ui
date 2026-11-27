@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* The vendored chat components: scan only their .vue files. The submodule's
+   tests, documents and playground mention classes the components do not use. */
+@source not "../../../vendor/vue-llm-ui";
+@source "../../../vendor/vue-llm-ui/src/**/*.vue";
+
 /* DESIGN.md §2 is the authority. Day values live in @theme, night values in
    .dark; every token is declared exactly twice. Components reference tokens
    only — no literal colors, no dark: variants. */

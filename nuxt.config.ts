@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 
 // Applies the stored theme before first paint, so a night user never sees a
@@ -8,6 +9,10 @@ export default defineNuxtConfig({
   compatibilityDate: '2026-10-30',
   modules: ['@pinia/nuxt', '@nuxt/fonts', '@nuxtjs/i18n'],
   css: ['~/assets/css/main.css'],
+  alias: {
+    // The shared chat components, vendored as a git submodule and compiled from source.
+    '@etherfunlab/vue-llm-ui': fileURLToPath(new URL('./vendor/vue-llm-ui/src/index.ts', import.meta.url)),
+  },
   app: {
     head: {
       script: [{ innerHTML: THEME_BOOT, tagPosition: 'head' }],
