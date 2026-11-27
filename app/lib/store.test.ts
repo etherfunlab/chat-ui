@@ -27,6 +27,7 @@ const message = (sessionId: string, over: Partial<StoredMessage> = {}): StoredMe
   images: [],
   reasoning: '',
   reasoningMs: null,
+  thinkingRequested: false,
   citations: [],
   usage: null,
   status: 'done',
@@ -143,6 +144,21 @@ describe('export / import', () => {
     expect(b!.citations).toEqual([{ title: 'ok', url: 'https://ok.example' }])
     expect(b!.usage).toBeNull()
     expect(b!.status).toBe('done')
+  })
+
+  it('reads thinkingRequested as true only when the file says so', async () => {
+    const without = message('imp2', { id: 'a' }) as Partial<StoredMessage>
+    delete without.thinkingRequested
+    const file = { format: 'chat-ui-export', version: 1, exportedAt: 'x', sessions: [{
+      ...session({ id: 'imp2' }),
+      messages: [
+        without,
+        message('imp2', { id: 'b', thinkingRequested: true }),
+        { ...message('imp2', { id: 'c' }), thinkingRequested: 'yes' },
+      ],
+    }] }
+    await store.importSessions('W', file)
+    expect((await store.listMessages('imp2')).map(m => m.thinkingRequested)).toEqual([false, true, false])
   })
 
   it('rejects an import with more sessions than the limit', async () => {

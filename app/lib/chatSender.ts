@@ -2,6 +2,7 @@ import type { ModelEntry } from '#shared/models'
 import { BodyTooLargeError, buildChatRequest } from './chatRequest'
 import { ChatApiError, type streamChat } from './chatStream'
 import type { ChatStore, StoredMessage, StoredSession } from './store'
+import { thinkingFor } from './thinking'
 
 export interface SenderDeps {
   store: ChatStore
@@ -38,15 +39,15 @@ export function createChatSender(deps: SenderDeps) {
     const { store } = deps
     const deleted = (): StoredMessage => ({
       id: deps.newId(), sessionId: i.session.id, role: 'assistant', text: '', images: [], reasoning: '',
-      reasoningMs: null, citations: [], usage: null, status: 'error', error: 'This chat was deleted.',
-      omittedImages: 0, model: i.model.id, createdAt: deps.now(),
+      reasoningMs: null, thinkingRequested: false, citations: [], usage: null, status: 'error',
+      error: 'This chat was deleted.', omittedImages: 0, model: i.model.id, createdAt: deps.now(),
     })
     if (!(await store.getSession(i.session.id))) return deleted()
     const history = await store.listMessages(i.session.id)
     const user: StoredMessage = {
       id: deps.newId(), sessionId: i.session.id, role: 'user', text: i.text, images: i.images,
-      reasoning: '', reasoningMs: null, citations: [], usage: null, status: 'done', error: null,
-      omittedImages: 0, model: i.model.id, createdAt: deps.now(),
+      reasoning: '', reasoningMs: null, thinkingRequested: false, citations: [], usage: null, status: 'done',
+      error: null, omittedImages: 0, model: i.model.id, createdAt: deps.now(),
     }
     await store.putMessage(user)
 
@@ -61,7 +62,8 @@ export function createChatSender(deps: SenderDeps) {
 
     const answer: StoredMessage = {
       id: deps.newId(), sessionId: i.session.id, role: 'assistant', text: '', images: [], reasoning: '',
-      reasoningMs: null, citations: [], usage: null, status: 'streaming', error: null, omittedImages: 0,
+      reasoningMs: null, thinkingRequested: thinkingFor(i.model, i.session.thinking).enabled,
+      citations: [], usage: null, status: 'streaming', error: null, omittedImages: 0,
       model: i.model.id, createdAt: deps.now(),
     }
 
@@ -87,7 +89,6 @@ export function createChatSender(deps: SenderDeps) {
     i.onUpdate({ ...answer })
 
     const started = deps.now()
-    let reasoningEnded: number | null = null
     let lastFlush = 0
     const flush = (force = false) => {
       const t = deps.now()
@@ -103,7 +104,9 @@ export function createChatSender(deps: SenderDeps) {
         onDelta: (d) => {
           answer.reasoning += d.reasoning
           if (d.text) {
-            if (answer.reasoning && reasoningEnded === null) reasoningEnded = deps.now()
+            // Thinking is over once the answer starts. Stamping the duration
+            // here lets the view swap the live thinking for its summary at once.
+            if (answer.reasoning && answer.reasoningMs === null) answer.reasoningMs = deps.now() - started
             answer.text += d.text
           }
           i.onUpdate({ ...answer })
@@ -126,7 +129,8 @@ export function createChatSender(deps: SenderDeps) {
       }
     }
 
-    if (answer.reasoning) answer.reasoningMs = (reasoningEnded ?? deps.now()) - started
+    // The stream ended before any answer text: thinking ran until now.
+    if (answer.reasoning && answer.reasoningMs === null) answer.reasoningMs = deps.now() - started
     const latest = await store.getSession(i.session.id)
     if (!latest) {
       // Deleted while streaming: drop anything a flush wrote after the delete.
